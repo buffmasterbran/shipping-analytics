@@ -12,9 +12,10 @@ export default function Dashboard() {
   const [startDate, setStartDate] = useState(format(startOfDay(new Date()), 'yyyy-MM-dd'));
   const [endDate, setEndDate] = useState(format(endOfDay(new Date()), 'yyyy-MM-dd'));
   const [showUserTable, setShowUserTable] = useState(false);
-  const [showChart, setShowChart] = useState(false);
+  const [showChart, setShowChart] = useState(true); // Chart expanded by default
   const [showRawData, setShowRawData] = useState(false);
   const [visibleUsers, setVisibleUsers] = useState<Set<string>>(new Set());
+  const [sidebarOpen, setSidebarOpen] = useState(true); // Sidebar open by default
 
   const fetchData = async (start: string, end: string) => {
     setLoading(true);
@@ -138,178 +139,224 @@ export default function Dashboard() {
     : data?.totals.totalShipments || 0;
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-7xl mx-auto">
-        {/* Date Range Selector and Summary Cards */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+    <div className="min-h-screen bg-gray-50 flex">
+      {/* Sidebar */}
+      <div
+        className={`bg-white shadow-lg transition-all duration-300 ease-in-out ${
+          sidebarOpen ? 'w-80' : 'w-0'
+        }`}
+        style={{ height: '100vh', position: 'fixed', left: 0, top: 0, zIndex: 40 }}
+      >
+        <div className={`${sidebarOpen ? 'p-6' : 'hidden'} space-y-6 h-full overflow-y-auto`}>
+          {/* Sidebar Toggle Button and Quick Date Buttons */}
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex gap-2 flex-1">
+              <button
+                onClick={() => handleDateRangeChange('today')}
+                className="flex-1 px-3 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+              >
+                Today
+              </button>
+              <button
+                onClick={() => handleDateRangeChange('yesterday')}
+                className="flex-1 px-3 py-2 text-sm bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
+              >
+                Yesterday
+              </button>
+            </div>
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="p-2 hover:bg-gray-100 rounded-md transition-colors ml-2"
+              aria-label="Collapse sidebar"
+            >
+              <svg
+                className="w-5 h-5 text-gray-600"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+          </div>
+
           {/* Date Range Selector */}
-          <div className="bg-white rounded-lg shadow-md p-3">
-            <div className="flex flex-col gap-3">
-              <div className="flex gap-2">
-                <button
-                  onClick={() => handleDateRangeChange('today')}
-                  className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-                >
-                  Today
-                </button>
-                <button
-                  onClick={() => handleDateRangeChange('yesterday')}
-                  className="px-3 py-1.5 text-sm bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
-                >
-                  Yesterday
-                </button>
-              </div>
-              <div className="flex gap-3 items-end">
+          <div>
+            <div className="space-y-3">
+              <div className="space-y-2">
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-0.5">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
                     Start Date
                   </label>
                   <input
                     type="date"
                     value={startDate}
                     onChange={(e) => setStartDate(e.target.value)}
-                    className="border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-0.5">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
                     End Date
                   </label>
                   <input
                     type="date"
                     value={endDate}
                     onChange={(e) => setEndDate(e.target.value)}
-                    className="border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
                 <button
                   onClick={handleCustomDateSubmit}
-                  className="px-3 py-1.5 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
+                  className="w-full px-3 py-2 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
                 >
                   Apply
                 </button>
               </div>
-              {data && (
-                <div className="text-xs text-gray-500 mt-1">
-                  Timezone: {data.timezone}
-                </div>
-              )}
             </div>
           </div>
 
-          {/* Summary Cards - only show when data is loaded */}
+          {/* Summary Cards */}
           {!loading && !error && data && (
-            <>
-              <div className="bg-white rounded-lg shadow-md p-4">
-                <h3 className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+            <div className="space-y-3">
+              <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
                   Total Shipments
-                </h3>
-                <p className="mt-1 text-2xl font-bold text-gray-900">
+                </div>
+                <div className="text-2xl font-bold text-gray-900">
                   {data.totals.totalShipments.toLocaleString()}
-                </p>
-                <p className="mt-0.5 text-xs text-gray-600">
-                  {data.startDate} to {data.endDate}
-                </p>
+                </div>
+                <div className="text-xs text-gray-600 mt-1">
+                  {format(new Date(data.startDate), 'EEE MM/dd')} to {format(new Date(data.endDate), 'EEE MM/dd')}
+                </div>
               </div>
-              <div className="bg-white rounded-lg shadow-md p-4">
-                <h3 className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+              <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
                   Active Users
-                </h3>
-                <p className="mt-1 text-2xl font-bold text-gray-900">
+                </div>
+                <div className="text-2xl font-bold text-gray-900">
                   {data.users.length}
-                </p>
-                <p className="mt-0.5 text-xs text-gray-600">
-                  Users with shipments
-                </p>
+                </div>
               </div>
-            </>
+            </div>
+          )}
+
+          {/* User Toggle Controls */}
+          {!loading && !error && data && data.users.length > 0 && (
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-medium text-gray-700">Show/Hide Users</h3>
+                <button
+                  onClick={toggleAllUsers}
+                  className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                >
+                  {visibleUsers.size === userNames.length ? 'Hide All' : 'Show All'}
+                </button>
+              </div>
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {userNames.map((userName) => (
+                  <label
+                    key={userName}
+                    className="flex items-center cursor-pointer group p-2 hover:bg-gray-50 rounded-md transition-colors"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={visibleUsers.has(userName)}
+                      onChange={() => toggleUser(userName)}
+                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    />
+                    <span
+                      className="ml-3 text-sm font-medium flex items-center flex-1"
+                      style={{
+                        color: visibleUsers.has(userName) ? userColorMap[userName] : '#9ca3af',
+                        opacity: visibleUsers.has(userName) ? 1 : 0.5,
+                      }}
+                    >
+                      <span
+                        className="inline-block w-3 h-3 rounded-full mr-2"
+                        style={{ backgroundColor: userColorMap[userName] }}
+                      />
+                      {userName}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
           )}
         </div>
+      </div>
 
-        {/* Global User Toggle Controls */}
-        {!loading && !error && data && data.users.length > 0 && (
-          <div className="bg-white rounded-lg shadow-md p-4 mb-6">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-medium text-gray-700">Show/Hide Users:</h3>
-              <button
-                onClick={toggleAllUsers}
-                className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+      {/* Main Content Area */}
+      <div 
+        className="flex-1 flex flex-col min-h-screen overflow-y-auto"
+        style={{ marginLeft: sidebarOpen ? '320px' : '60px', transition: 'margin-left 300ms ease-in-out' }}
+      >
+        {/* Sidebar Toggle Stripe (when sidebar is closed) */}
+        {!sidebarOpen && (
+          <div
+            className="fixed left-0 top-0 bottom-0 w-14 bg-white shadow-lg z-40 flex items-center justify-center"
+            style={{ height: '100vh' }}
+          >
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="p-3 hover:bg-gray-100 transition-colors rounded-md"
+              aria-label="Open sidebar"
+            >
+              <svg
+                className="w-6 h-6 text-gray-600"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
               >
-                {visibleUsers.size === userNames.length ? 'Hide All' : 'Show All'}
-              </button>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+          </div>
+        )}
+
+        <div className="flex-1 p-6">
+
+          {/* Loading State */}
+          {loading && (
+            <div className="bg-white rounded-lg shadow-md p-12 text-center">
+              <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+              <p className="mt-4 text-gray-600">Loading shipment data...</p>
             </div>
-            <div className="flex flex-wrap gap-4">
-              {userNames.map((userName) => (
-                <label
-                  key={userName}
-                  className="flex items-center cursor-pointer group"
-                >
-                  <input
-                    type="checkbox"
-                    checked={visibleUsers.has(userName)}
-                    onChange={() => toggleUser(userName)}
-                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                  />
-                  <span
-                    className="ml-2 text-sm font-medium flex items-center"
-                    style={{
-                      color: visibleUsers.has(userName) ? userColorMap[userName] : '#9ca3af',
-                      opacity: visibleUsers.has(userName) ? 1 : 0.5,
-                    }}
-                  >
-                    <span
-                      className="inline-block w-3 h-3 rounded-full mr-2"
-                      style={{ backgroundColor: userColorMap[userName] }}
-                    />
-                    {userName}
-                  </span>
-                </label>
-              ))}
+          )}
+
+          {/* Error State */}
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+              <p className="text-red-800 font-medium">Error: {error}</p>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Loading State */}
-        {loading && (
-          <div className="bg-white rounded-lg shadow-md p-12 text-center">
-            <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-            <p className="mt-4 text-gray-600">Loading shipment data...</p>
-          </div>
-        )}
-
-        {/* Error State */}
-        {error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
-            <p className="text-red-800 font-medium">Error: {error}</p>
-          </div>
-        )}
-
-        {/* Dashboard Content */}
-        {!loading && !error && data && (
-          <>
-            {/* Chart */}
-            {chartData.length > 0 ? (
-              <div className="bg-white rounded-lg shadow-md">
-                <button
-                  onClick={() => setShowChart(!showChart)}
-                  className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-gray-50 transition-colors rounded-lg"
-                >
-                  <h2 className="text-lg font-semibold text-gray-800">
-                    Shipments Per Hour by User
-                  </h2>
-                  <svg
-                    className={`w-5 h-5 text-gray-500 transform transition-transform ${showChart ? 'rotate-180' : ''}`}
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
+          {/* Dashboard Content */}
+          {!loading && !error && data && (
+            <>
+              {/* Chart */}
+              {chartData.length > 0 ? (
+                <div className="bg-white rounded-lg shadow-md mb-6">
+                  <button
+                    onClick={() => setShowChart(!showChart)}
+                    className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-gray-50 transition-colors rounded-lg"
                   >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-                
-                {showChart && (
-                  <div className="px-6 pb-6">
-                    <div className="h-96">
+                    <h2 className="text-lg font-semibold text-gray-800">
+                      Shipments Per Hour by User
+                    </h2>
+                    <svg
+                      className={`w-5 h-5 text-gray-500 transform transition-transform ${showChart ? 'rotate-180' : ''}`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  
+                  {showChart && (
+                    <div className="px-6 pb-6">
+                      <div className="h-[calc(100vh-300px)] min-h-[500px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
@@ -375,9 +422,9 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* User Summary Table */}
-            {data.users.length > 0 && (
-              <div className="bg-white rounded-lg shadow-md mb-6 mt-6">
+              {/* User Summary Table */}
+              {data.users.length > 0 && (
+                <div className="bg-white rounded-lg shadow-md mb-6">
                 <button
                   onClick={() => setShowUserTable(!showUserTable)}
                   className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-gray-50 transition-colors rounded-lg"
@@ -442,9 +489,9 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* Raw Data Section */}
-            {data.rawShipments && data.rawShipments.length > 0 && (
-              <div className="bg-white rounded-lg shadow-md mt-6">
+              {/* Raw Data Section */}
+              {data.rawShipments && data.rawShipments.length > 0 && (
+                <div className="bg-white rounded-lg shadow-md">
                 <button
                   onClick={() => setShowRawData(!showRawData)}
                   className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-gray-50 transition-colors rounded-lg"
@@ -475,9 +522,10 @@ export default function Dashboard() {
                   </div>
                 )}
               </div>
-            )}
-          </>
-        )}
+              )}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
