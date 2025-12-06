@@ -38,15 +38,13 @@ export async function GET(request: NextRequest) {
     const endDateFormatted = endDate.split('T')[0];
 
     // Convert to UTC for ShipStation API (they expect UTC dates)
-    const startUTC = zonedTimeToUtc(
-      new Date(`${startDateFormatted}T00:00:00`),
-      TIMEZONE
-    ).toISOString();
+    // IMPORTANT: Parse the date string as Eastern Time explicitly, then convert to UTC
+    // This ensures consistent behavior on both localhost (Eastern) and Vercel (UTC)
+    const startDateEastern = parseISO(`${startDateFormatted}T00:00:00`);
+    const startUTC = zonedTimeToUtc(startDateEastern, TIMEZONE).toISOString();
     
-    const endUTC = zonedTimeToUtc(
-      new Date(`${endDateFormatted}T23:59:59`),
-      TIMEZONE
-    ).toISOString();
+    const endDateEastern = parseISO(`${endDateFormatted}T23:59:59`);
+    const endUTC = zonedTimeToUtc(endDateEastern, TIMEZONE).toISOString();
 
     // Step 1: Fetch active users first to get name mappings
     const activeUsers = await fetchAllUsers(false);
