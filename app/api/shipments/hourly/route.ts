@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { format, startOfDay, endOfDay, differenceInDays } from 'date-fns';
-import { zonedTimeToUtc } from 'date-fns-tz';
+import { zonedTimeToUtc, utcToZonedTime } from 'date-fns-tz';
 import { fetchAllShipments, fetchAllUsers } from '@/lib/shipstation';
 import { aggregateShipmentsByHour, aggregateShipmentsByDay } from '@/lib/aggregation';
 import type { ShipmentsHourlyResponse } from '@/types/shipstation';
@@ -22,8 +22,9 @@ export async function GET(request: NextRequest) {
     let endDate = searchParams.get('endDate');
 
     // Default to today in New York timezone
+    // Convert UTC now to Eastern time, then get start/end of day in Eastern time
     const now = new Date();
-    const nyNow = new Date(now.toLocaleString('en-US', { timeZone: TIMEZONE }));
+    const nyNow = utcToZonedTime(now, TIMEZONE);
     
     if (!startDate) {
       startDate = format(startOfDay(nyNow), 'yyyy-MM-dd');
