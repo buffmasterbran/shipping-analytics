@@ -7,6 +7,12 @@ import type { ShipmentsHourlyResponse, ShipStationUser } from '@/types/shipstati
 
 const TIMEZONE = 'America/New_York';
 
+// Set timezone for consistent date parsing across environments
+// This ensures that date operations use Eastern time consistently
+if (typeof process !== 'undefined' && process.env) {
+  process.env.TZ = TIMEZONE;
+}
+
 /**
  * GET /api/shipments/hourly
  * Fetch shipments and aggregate by hour and user
