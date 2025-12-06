@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { format, subDays, startOfDay, endOfDay } from 'date-fns';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import type { ShipmentsHourlyResponse, HourlySeriesPoint } from '@/types/shipstation';
+import type { ShipmentsHourlyResponse, HourlySeriesPoint, UserSummary } from '@/types/shipstation';
 import DateRangePicker from '@/components/DateRangePicker';
 
 /**
