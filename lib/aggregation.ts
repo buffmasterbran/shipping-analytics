@@ -147,3 +147,126 @@ export function aggregateShipmentsByHour(
   };
 }
 
+/**
+ * Aggregate shipments by day and userId
+ */
+export function aggregateShipmentsByDay(
+  shipments: ShipStationShipment[],
+  userMap: Map<string | number, string>
+): {
+  series: HourlySeriesPoint[];
+  userSummaries: UserSummary[];
+  totalShipments: number;
+} {
+  // Map to store counts: day -> userName -> count
+  const dayMap = new Map<string, Map<string, number>>();
+  
+  // Map to store user totals: userName -> count
+  const userTotals = new Map<string, number>();
+  
+  // Map to store userName -> userId mapping
+  const userNameToUserId = new Map<string, string>();
+
+  for (const shipment of shipments) {
+    // Use createDate, fallback to shipDate
+    let dateStr = shipment.createDate || shipment.shipDate;
+    if (!dateStr) continue;
+
+    // ShipStation returns dates in Pacific Time (PST/PDT) without timezone indicator
+    // Parse the date string and treat it as Pacific Time, then convert to Eastern Time
+    let nyDate: Date;
+    if (dateStr.includes('Z') || dateStr.includes('+') || dateStr.match(/-\d{2}:\d{2}$/)) {
+      // Has timezone indicator, parse normally and convert to Eastern
+      const parsedDate = parseISO(dateStr);
+      nyDate = utcToZonedTime(parsedDate, TIMEZONE);
+    } else {
+      // No timezone indicator - treat as Pacific Time
+      const cleanDateStr = dateStr.replace(/\.\d+$/, ''); // Remove milliseconds
+      const match = cleanDateStr.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/);
+      
+      if (match) {
+        const [, year, month, day, hour, minute, second] = match.map(Number);
+        const pacificDateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}`;
+        const utcDate = parseISO(pacificDateStr + 'Z');
+        const actualUtcDate = new Date(utcDate.getTime() + (8 * 60 * 60 * 1000)); // Add 8 hours for PST
+        nyDate = utcToZonedTime(actualUtcDate, TIMEZONE);
+      } else {
+        // Fallback: parse normally
+        const parsedDate = parseISO(cleanDateStr);
+        nyDate = utcToZonedTime(parsedDate, TIMEZONE);
+      }
+    }
+
+    // Format as day bucket: "2025-12-06T00:00:00-05:00"
+    const dayBucket = format(nyDate, "yyyy-MM-dd'T'00:00:00XXX");
+
+    // Get user identifier
+    const userId = typeof shipment.userId === 'string' ? shipment.userId : shipment.userId.toString();
+    
+    // Try multiple lookup strategies for UUID matching
+    let userName = userMap.get(shipment.userId);
+    if (!userName && typeof shipment.userId === 'string') {
+      // Try case-insensitive match
+      for (const [key, value] of userMap.entries()) {
+        if (typeof key === 'string' && key.toLowerCase() === shipment.userId.toLowerCase()) {
+          userName = value;
+          break;
+        }
+      }
+    }
+    
+    // Fallback to User ID if no match found
+    if (!userName) {
+      userName = `User ${userId}`;
+    }
+    
+    const userKey = userName;
+
+    // Store userName -> userId mapping
+    if (!userNameToUserId.has(userKey)) {
+      userNameToUserId.set(userKey, userId);
+    }
+
+    // Initialize day bucket if needed
+    if (!dayMap.has(dayBucket)) {
+      dayMap.set(dayBucket, new Map());
+    }
+
+    const dayData = dayMap.get(dayBucket)!;
+    dayData.set(userKey, (dayData.get(userKey) || 0) + 1);
+
+    // Update user totals
+    userTotals.set(userKey, (userTotals.get(userKey) || 0) + 1);
+  }
+
+  // Convert to series array
+  const series: HourlySeriesPoint[] = Array.from(dayMap.entries())
+    .map(([day, userCounts]) => {
+      const point: HourlySeriesPoint = { hour: day };
+      userCounts.forEach((count, userKey) => {
+        point[userKey] = count;
+      });
+      return point;
+    })
+    .sort((a, b) => a.hour.localeCompare(b.hour));
+
+  // Convert user totals to summaries
+  const userSummaries: UserSummary[] = Array.from(userTotals.entries())
+    .map(([userKey, totalShipments]) => {
+      const userId = userNameToUserId.get(userKey) || userKey;
+      
+      return {
+        userId,
+        userName: userKey,
+        totalShipments,
+      };
+    })
+    .sort((a, b) => b.totalShipments - a.totalShipments);
+
+  return {
+    series,
+    userSummaries,
+    totalShipments: shipments.length,
+  };
+}
+

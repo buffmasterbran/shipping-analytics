@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { format, startOfDay, endOfDay } from 'date-fns';
+import { format, startOfDay, endOfDay, differenceInDays } from 'date-fns';
 import { zonedTimeToUtc } from 'date-fns-tz';
 import { fetchAllShipments, fetchAllUsers } from '@/lib/shipstation';
-import { aggregateShipmentsByHour } from '@/lib/aggregation';
+import { aggregateShipmentsByHour, aggregateShipmentsByDay } from '@/lib/aggregation';
 import type { ShipmentsHourlyResponse } from '@/types/shipstation';
 
 const TIMEZONE = 'America/New_York';
@@ -72,11 +72,17 @@ export async function GET(request: NextRequest) {
       console.log('User map has this userId?', userMap.has(shipments[0].userId));
     }
 
-    // Aggregate by hour and user
-    const { series, userSummaries, totalShipments } = aggregateShipmentsByHour(
-      shipments,
-      userMap
-    );
+    // Determine if we should aggregate by day or hour
+    // If the date range spans more than 1 day, use daily aggregation
+    const startDateObj = new Date(`${startDateFormatted}T00:00:00`);
+    const endDateObj = new Date(`${endDateFormatted}T23:59:59`);
+    const daysDiff = differenceInDays(endDateObj, startDateObj);
+    const useDailyAggregation = daysDiff > 1;
+
+    // Aggregate by hour or day based on date range
+    const { series, userSummaries, totalShipments } = useDailyAggregation
+      ? aggregateShipmentsByDay(shipments, userMap)
+      : aggregateShipmentsByHour(shipments, userMap);
 
     const response: ShipmentsHourlyResponse = {
       startDate: startDateFormatted,

@@ -289,18 +289,18 @@ export default function Dashboard() {
       {/* Main Content Area */}
       <div 
         className="flex-1 flex flex-col min-h-screen overflow-y-auto"
-        style={{ marginLeft: sidebarOpen ? '320px' : '60px', transition: 'margin-left 300ms ease-in-out' }}
+        style={{ marginLeft: sidebarOpen ? '320px' : '48px', transition: 'margin-left 300ms ease-in-out' }}
       >
         {/* Sidebar Toggle Stripe (when sidebar is closed) */}
         {!sidebarOpen && (
           <div
-            className="fixed left-0 top-0 bottom-0 w-14 bg-white shadow-lg z-40 flex items-center justify-center"
+            className="fixed left-0 top-0 bottom-0 w-12 bg-white shadow-lg z-40 flex items-start justify-center pt-4"
             style={{ height: '100vh' }}
           >
             <button
               onClick={() => setSidebarOpen(true)}
               className="p-3 hover:bg-gray-100 transition-colors rounded-md"
-              aria-label="Open sidebar"
+              aria-label="Expand menu"
             >
               <svg
                 className="w-6 h-6 text-gray-600"
@@ -308,7 +308,7 @@ export default function Dashboard() {
                 stroke="currentColor"
                 viewBox="0 0 24 24"
               >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
               </svg>
             </button>
           </div>
@@ -334,7 +334,7 @@ export default function Dashboard() {
           {/* Dashboard Content */}
           {!loading && !error && data && (
             <>
-              {/* Chart */}
+              {/* Chart and User Table Combined */}
               {chartData.length > 0 ? (
                 <div className="bg-white rounded-lg shadow-md mb-6">
                   <button
@@ -356,136 +356,125 @@ export default function Dashboard() {
                   
                   {showChart && (
                     <div className="px-6 pb-6">
-                      <div className="h-[calc(100vh-300px)] min-h-[500px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                          <XAxis
-                            dataKey="hour"
-                            stroke="#6b7280"
-                            tick={{ fill: '#6b7280', fontSize: 12 }}
-                            angle={-45}
-                            textAnchor="end"
-                            height={80}
-                            tickFormatter={(value) => {
-                              try {
-                                const date = new Date(value);
-                                return format(date, 'MM/dd HH:mm');
-                              } catch {
-                                return value;
-                              }
-                            }}
-                          />
-                          <YAxis stroke="#6b7280" tick={{ fill: '#6b7280', fontSize: 12 }} />
-                          <Tooltip
-                            contentStyle={{
-                              backgroundColor: '#fff',
-                              border: '1px solid #e5e7eb',
-                              borderRadius: '8px',
-                              padding: '12px',
-                            }}
-                            labelFormatter={(value) => {
-                              try {
-                                const date = new Date(value);
-                                return format(date, 'MMM dd, yyyy HH:mm');
-                              } catch {
-                                return value;
-                              }
-                            }}
-                            formatter={(value: number) => [value, 'Shipments']}
-                          />
-                          <Legend
-                            wrapperStyle={{ paddingTop: '20px' }}
-                            iconType="line"
-                          />
-                          {visibleUserNames.map((userName) => (
-                            <Line
-                              key={userName}
-                              type="monotone"
-                              dataKey={userName}
-                              stroke={userColorMap[userName]}
-                              strokeWidth={2}
-                              dot={{ r: 3 }}
-                              activeDot={{ r: 6 }}
-                              name={userName}
+                      <div className="h-[calc(100vh-300px)] min-h-[500px] mb-6">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                            <XAxis
+                              dataKey="hour"
+                              stroke="#6b7280"
+                              tick={{ fill: '#6b7280', fontSize: 12 }}
+                              angle={-45}
+                              textAnchor="end"
+                              height={80}
+                              tickFormatter={(value) => {
+                                try {
+                                  const date = new Date(value);
+                                  // Check if this is daily data (date range > 1 day)
+                                  const startDateObj = data ? new Date(data.startDate) : null;
+                                  const endDateObj = data ? new Date(data.endDate) : null;
+                                  const isDaily = startDateObj && endDateObj && 
+                                    Math.abs((endDateObj.getTime() - startDateObj.getTime()) / (1000 * 60 * 60 * 24)) > 1;
+                                  
+                                  if (isDaily) {
+                                    return format(date, 'MM/dd');
+                                  } else {
+                                    return format(date, 'HH:mm');
+                                  }
+                                } catch {
+                                  return value;
+                                }
+                              }}
                             />
-                          ))}
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
+                            <YAxis stroke="#6b7280" tick={{ fill: '#6b7280', fontSize: 12 }} />
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: '#fff',
+                                border: '1px solid #e5e7eb',
+                                borderRadius: '8px',
+                                padding: '12px',
+                              }}
+                              labelFormatter={(value) => {
+                                try {
+                                  const date = new Date(value);
+                                  return format(date, 'MMM dd, yyyy HH:mm');
+                                } catch {
+                                  return value;
+                                }
+                              }}
+                              formatter={(value: number) => [value, 'Shipments']}
+                            />
+                            <Legend
+                              wrapperStyle={{ paddingTop: '20px' }}
+                              iconType="line"
+                            />
+                            {visibleUserNames.map((userName) => (
+                              <Line
+                                key={userName}
+                                type="monotone"
+                                dataKey={userName}
+                                stroke={userColorMap[userName]}
+                                strokeWidth={2}
+                                dot={{ r: 3 }}
+                                activeDot={{ r: 6 }}
+                                name={userName}
+                              />
+                            ))}
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+
+                      {/* User Summary Table */}
+                      {data.users.length > 0 && (
+                        <div className="border-t border-gray-200 pt-6">
+                          <div className="overflow-x-auto">
+                            <table className="min-w-full divide-y divide-gray-200">
+                              <thead className="bg-gray-50">
+                                <tr>
+                                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    User
+                                  </th>
+                                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Total Shipments
+                                  </th>
+                                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Percentage
+                                  </th>
+                                </tr>
+                              </thead>
+                              <tbody className="bg-white divide-y divide-gray-200">
+                                {[...data.users]
+                                  .sort((a, b) => a.userName.localeCompare(b.userName))
+                                  .filter((user) => visibleUsers.has(user.userName))
+                                  .map((user) => {
+                                    const percentage = visibleUsersTotal > 0
+                                      ? ((user.totalShipments / visibleUsersTotal) * 100).toFixed(1)
+                                      : '0';
+                                    return (
+                                      <tr key={user.userId}>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                          {user.userName}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                          {user.totalShipments.toLocaleString()}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                          {percentage}%
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
                   </div>
                 )}
               </div>
             ) : (
               <div className="bg-white rounded-lg shadow-md p-12 text-center">
                 <p className="text-gray-600 text-lg">No shipment data available for the selected date range.</p>
-              </div>
-            )}
-
-              {/* User Summary Table */}
-              {data.users.length > 0 && (
-                <div className="bg-white rounded-lg shadow-md mb-6">
-                <button
-                  onClick={() => setShowUserTable(!showUserTable)}
-                  className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-gray-50 transition-colors rounded-lg"
-                >
-                  <h2 className="text-lg font-semibold text-gray-800">
-                    Shipments by User ({data.users.length} users)
-                  </h2>
-                  <svg
-                    className={`w-5 h-5 text-gray-500 transform transition-transform ${showUserTable ? 'rotate-180' : ''}`}
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-                
-                {showUserTable && (
-                  <div className="px-6 pb-6">
-                    <div className="overflow-x-auto mt-4">
-                      <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50">
-                          <tr>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                              User
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                              Total Shipments
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                              Percentage
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
-                          {[...data.users]
-                            .sort((a, b) => a.userName.localeCompare(b.userName))
-                            .filter((user) => visibleUsers.has(user.userName))
-                            .map((user) => {
-                            const percentage = visibleUsersTotal > 0
-                              ? ((user.totalShipments / visibleUsersTotal) * 100).toFixed(1)
-                              : '0';
-                            return (
-                              <tr key={user.userId}>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                                  {user.userName}
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                  {user.totalShipments.toLocaleString()}
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                  {percentage}%
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
               </div>
             )}
 
