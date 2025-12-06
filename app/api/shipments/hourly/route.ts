@@ -40,10 +40,12 @@ export async function GET(request: NextRequest) {
     // Convert to UTC for ShipStation API (they expect UTC dates)
     // IMPORTANT: Parse the date string as Eastern Time explicitly, then convert to UTC
     // This ensures consistent behavior on both localhost (Eastern) and Vercel (UTC)
-    const startDateEastern = parseISO(`${startDateFormatted}T00:00:00`);
+    // We need to treat the date string as Eastern time, so we parse it and then use zonedTimeToUtc
+    // The date string "2025-12-06T00:00:00" should be interpreted as Eastern time, not UTC
+    const startDateEastern = parseISO(`${startDateFormatted}T00:00:00-05:00`); // EST offset
     const startUTC = zonedTimeToUtc(startDateEastern, TIMEZONE).toISOString();
     
-    const endDateEastern = parseISO(`${endDateFormatted}T23:59:59`);
+    const endDateEastern = parseISO(`${endDateFormatted}T23:59:59-05:00`); // EST offset
     const endUTC = zonedTimeToUtc(endDateEastern, TIMEZONE).toISOString();
 
     // Step 1: Fetch active users first to get name mappings
