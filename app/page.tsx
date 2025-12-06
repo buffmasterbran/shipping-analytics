@@ -19,6 +19,53 @@ export default function Dashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(true); // Sidebar open by default
   const [openBoxDropdown, setOpenBoxDropdown] = useState<string | null>(null);
   const [detailModal, setDetailModal] = useState<{ userId: string; userName: string; boxSize: string } | null>(null);
+  // Track manual inclusion/exclusion overrides for detail modal entries
+  const [detailModalOverrides, setDetailModalOverrides] = useState<Map<number, boolean>>(new Map());
+  // Persistent exclusions stored in localStorage: Map<`${userId}_${boxSize}`, Set<detailIndex>>
+  const [persistentExclusions, setPersistentExclusions] = useState<Map<string, Set<number>>>(new Map());
+  
+  // Load exclusions from localStorage on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('packingTimeExclusions');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        const exclusionsMap = new Map<string, Set<number>>();
+        Object.entries(parsed).forEach(([key, value]) => {
+          exclusionsMap.set(key, new Set(value as number[]));
+        });
+        setPersistentExclusions(exclusionsMap);
+      }
+    } catch (error) {
+      console.error('Failed to load exclusions from localStorage:', error);
+    }
+  }, []);
+  
+  // Save exclusions to localStorage whenever they change
+  useEffect(() => {
+    try {
+      const toStore: Record<string, number[]> = {};
+      persistentExclusions.forEach((indices, key) => {
+        toStore[key] = Array.from(indices);
+      });
+      localStorage.setItem('packingTimeExclusions', JSON.stringify(toStore));
+    } catch (error) {
+      console.error('Failed to save exclusions to localStorage:', error);
+    }
+  }, [persistentExclusions]);
+  
+  // Load overrides from persistent exclusions when modal opens
+  useEffect(() => {
+    if (detailModal) {
+      const exclusionKey = `${detailModal.userId}_${detailModal.boxSize}`;
+      const excludedIndices = persistentExclusions.get(exclusionKey) || new Set<number>();
+      const overrides = new Map<number, boolean>();
+      excludedIndices.forEach(index => {
+        overrides.set(index, false); // false means excluded
+      });
+      setDetailModalOverrides(overrides);
+    }
+  }, [detailModal?.userId, detailModal?.boxSize, persistentExclusions]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -587,9 +634,31 @@ export default function Dashboard() {
                                                         ? ((count / totalBoxCount) * 100).toFixed(1) 
                                                         : '0';
                                                       const boxStats = user.boxSizeStats?.[boxSize];
-                                                      const avgTime = boxStats?.averageTimeMinutes;
+                                                      
+                                                      // Apply exclusions to recalculate average
+                                                      const exclusionKey = `${user.userId}_${boxSize}`;
+                                                      const excludedIndices = persistentExclusions.get(exclusionKey) || new Set<number>();
+                                                      let avgTime = boxStats?.averageTimeMinutes;
+                                                      let isMeetingGoal = boxStats?.isMeetingGoal;
+                                                      
+                                                      if (boxStats?.packingTimeDetails && excludedIndices.size > 0) {
+                                                        const includedTimes = boxStats.packingTimeDetails
+                                                          .map((detail, index) => {
+                                                            const isExcluded = excludedIndices.has(index);
+                                                            return isExcluded ? null : (detail.included ? detail.timeDifferenceMinutes : null);
+                                                          })
+                                                          .filter((time): time is number => time !== null);
+                                                        
+                                                        if (includedTimes.length > 0) {
+                                                          avgTime = includedTimes.reduce((sum, time) => sum + time, 0) / includedTimes.length;
+                                                          const goal = boxStats.goalMinutes;
+                                                          if (goal !== undefined) {
+                                                            isMeetingGoal = avgTime <= goal;
+                                                          }
+                                                        }
+                                                      }
+                                                      
                                                       const goal = boxStats?.goalMinutes;
-                                                      const isMeetingGoal = boxStats?.isMeetingGoal;
                                                       
                                                       return (
                                                         <tr key={boxSize} className="hover:bg-gray-50">
@@ -701,6 +770,97 @@ export default function Dashboard() {
         const boxStats = user?.boxSizeStats?.[detailModal.boxSize];
         const details = boxStats?.packingTimeDetails || [];
         
+        // Sort details by time difference (biggest first)
+        const sortedDetails = [...details].sort((a, b) => 
+          (b.timeDifferenceMinutes || 0) - (a.timeDifferenceMinutes || 0)
+        );
+        
+        // Calculate current average based on manual overrides
+        // Map original index to sorted index for overrides
+        const originalIndexMap = new Map<number, number>();
+        sortedDetails.forEach((sortedDetail, sortedIndex) => {
+          const originalIndex = details.findIndex(d => 
+            d.currentTime === sortedDetail.currentTime && 
+            d.previousTime === sortedDetail.previousTime
+          );
+          if (originalIndex !== -1) {
+            originalIndexMap.set(sortedIndex, originalIndex);
+          }
+        });
+        
+        // Get persistent exclusions for this user/boxSize
+        const exclusionKey = `${detailModal.userId}_${detailModal.boxSize}`;
+        const excludedIndices = persistentExclusions.get(exclusionKey) || new Set<number>();
+        
+        const includedTimes = sortedDetails
+          .map((detail, sortedIndex) => {
+            const originalIndex = originalIndexMap.get(sortedIndex);
+            if (originalIndex === undefined) return null;
+            
+            // Check if this index is excluded (either from persistent exclusions or modal overrides)
+            const isExcludedPersistent = excludedIndices.has(originalIndex);
+            const override = detailModalOverrides.get(originalIndex);
+            
+            // If there's a modal override, use it; otherwise check persistent exclusion; otherwise use original included status
+            let isIncluded: boolean;
+            if (override !== undefined) {
+              isIncluded = override;
+            } else if (isExcludedPersistent) {
+              isIncluded = false;
+            } else {
+              isIncluded = detail.included;
+            }
+            
+            return isIncluded ? detail.timeDifferenceMinutes : null;
+          })
+          .filter((time): time is number => time !== null);
+        
+        const recalculatedAverage = includedTimes.length > 0
+          ? includedTimes.reduce((sum, time) => sum + time, 0) / includedTimes.length
+          : undefined;
+        
+        // Reset overrides when modal closes or changes
+        const handleModalClose = () => {
+          setDetailModalOverrides(new Map());
+          setDetailModal(null);
+        };
+        
+        const toggleInclusion = (sortedIndex: number) => {
+          const newOverrides = new Map(detailModalOverrides);
+          const originalIndex = originalIndexMap.get(sortedIndex);
+          if (originalIndex === undefined) return;
+          
+          const currentOverride = newOverrides.get(originalIndex);
+          const originalIncluded = details[originalIndex]?.included ?? false;
+          
+          // If no override exists, toggle from original state
+          // If override exists, toggle from override state
+          const newValue = currentOverride !== undefined ? !currentOverride : !originalIncluded;
+          newOverrides.set(originalIndex, newValue);
+          setDetailModalOverrides(newOverrides);
+          
+          // Save to persistent exclusions
+          const exclusionKey = `${detailModal.userId}_${detailModal.boxSize}`;
+          const newExclusions = new Map(persistentExclusions);
+          const excludedIndices = newExclusions.get(exclusionKey) || new Set<number>();
+          
+          if (newValue === false) {
+            // Excluding this entry
+            excludedIndices.add(originalIndex);
+          } else {
+            // Including this entry (remove from exclusions)
+            excludedIndices.delete(originalIndex);
+          }
+          
+          if (excludedIndices.size > 0) {
+            newExclusions.set(exclusionKey, excludedIndices);
+          } else {
+            newExclusions.delete(exclusionKey);
+          }
+          
+          setPersistentExclusions(newExclusions);
+        };
+        
         return (
           <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
@@ -714,13 +874,31 @@ export default function Dashboard() {
                     {detailModal.userName} - {detailModal.boxSize}
                   </p>
                   {boxStats && (
-                    <p className="text-sm text-gray-500 mt-1">
-                      Average: {boxStats.averageTimeMinutes?.toFixed(1)} min | Goal: {boxStats.goalMinutes} min
-                    </p>
+                    <div className="text-sm text-gray-500 mt-1">
+                      {recalculatedAverage !== undefined && (excludedIndices.size > 0 || detailModalOverrides.size > 0) ? (
+                        <>
+                          <p>
+                            Original Average: {boxStats.averageTimeMinutes?.toFixed(1)} min | Goal: {boxStats.goalMinutes} min
+                          </p>
+                          <p className="text-blue-600 font-medium mt-1">
+                            Recalculated Average: {recalculatedAverage.toFixed(1)} min
+                            {boxStats.goalMinutes && (
+                              <span className={recalculatedAverage <= boxStats.goalMinutes ? ' text-green-600' : ' text-red-600'}>
+                                {' '}({recalculatedAverage <= boxStats.goalMinutes ? 'Meeting' : 'Missing'} Goal)
+                              </span>
+                            )}
+                          </p>
+                        </>
+                      ) : (
+                        <p>
+                          Average: {boxStats.averageTimeMinutes?.toFixed(1)} min | Goal: {boxStats.goalMinutes} min
+                        </p>
+                      )}
+                    </div>
                   )}
                 </div>
                 <button
-                  onClick={() => setDetailModal(null)}
+                  onClick={handleModalClose}
                   className="text-gray-400 hover:text-gray-600 transition-colors"
                 >
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -735,6 +913,8 @@ export default function Dashboard() {
                   <div className="space-y-4">
                     <div className="text-sm text-gray-600 mb-4">
                       Showing time differences between consecutive shipments. Times marked in <span className="text-green-600 font-medium">green</span> were included in the average calculation, times marked in <span className="text-red-600 font-medium">red</span> were excluded (likely breaks).
+                      <br />
+                      <span className="font-medium text-blue-600">Click any status badge to toggle inclusion/exclusion and recalculate the average.</span>
                     </div>
                     <div className="overflow-x-auto">
                       <table className="min-w-full divide-y divide-gray-200">
@@ -744,13 +924,13 @@ export default function Dashboard() {
                               Previous Shipment
                             </th>
                             <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                              Previous Time
+                              Previous Order
                             </th>
                             <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                               Current Shipment
                             </th>
                             <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                              Current Time
+                              Current Order
                             </th>
                             <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                               Time Difference
@@ -761,36 +941,79 @@ export default function Dashboard() {
                           </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
-                          {details.map((detail, index) => (
-                            <tr key={index} className="hover:bg-gray-50">
+                          {sortedDetails.map((detail, sortedIndex) => {
+                            const originalIndex = originalIndexMap.get(sortedIndex) ?? sortedIndex;
+                            return (
+                            <tr key={`${detail.currentTime}-${detail.previousTime}`} className="hover:bg-gray-50">
                               <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                                 {detail.previousBoxSize}
                               </td>
                               <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                                {format(new Date(detail.previousTime), 'MMM dd, yyyy HH:mm:ss')}
+                                {format(new Date(detail.previousTime), 'h:mm a')}
                               </td>
                               <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
                                 {detail.currentBoxSize}
                               </td>
                               <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                                {format(new Date(detail.currentTime), 'MMM dd, yyyy HH:mm:ss')}
+                                {format(new Date(detail.currentTime), 'h:mm a')}
                               </td>
                               <td className={`px-4 py-3 whitespace-nowrap text-sm font-medium ${
-                                detail.included ? 'text-gray-900' : 'text-gray-400'
+                                (() => {
+                                  const isExcludedPersistent = excludedIndices.has(originalIndex);
+                                  const override = detailModalOverrides.get(originalIndex);
+                                  let isIncluded: boolean;
+                                  if (override !== undefined) {
+                                    isIncluded = override;
+                                  } else if (isExcludedPersistent) {
+                                    isIncluded = false;
+                                  } else {
+                                    isIncluded = detail.included;
+                                  }
+                                  return isIncluded ? 'text-gray-900' : 'text-gray-400';
+                                })()
                               }`}>
                                 {detail.timeDifferenceMinutes.toFixed(2)} min
                               </td>
                               <td className="px-4 py-3 whitespace-nowrap">
-                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                                  detail.included 
-                                    ? 'bg-green-100 text-green-800' 
-                                    : 'bg-red-100 text-red-800'
-                                }`}>
-                                  {detail.included ? 'Included' : 'Excluded'}
-                                </span>
+                                <button
+                                  onClick={() => toggleInclusion(sortedIndex)}
+                                  className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium cursor-pointer hover:opacity-80 transition-opacity ${
+                                    (() => {
+                                      const isExcludedPersistent = excludedIndices.has(originalIndex);
+                                      const override = detailModalOverrides.get(originalIndex);
+                                      let isIncluded: boolean;
+                                      if (override !== undefined) {
+                                        isIncluded = override;
+                                      } else if (isExcludedPersistent) {
+                                        isIncluded = false;
+                                      } else {
+                                        isIncluded = detail.included;
+                                      }
+                                      return isIncluded 
+                                        ? 'bg-green-100 text-green-800' 
+                                        : 'bg-red-100 text-red-800';
+                                    })()
+                                  }`}
+                                  title="Click to toggle inclusion/exclusion"
+                                >
+                                  {(() => {
+                                    const isExcludedPersistent = excludedIndices.has(originalIndex);
+                                    const override = detailModalOverrides.get(originalIndex);
+                                    let isIncluded: boolean;
+                                    if (override !== undefined) {
+                                      isIncluded = override;
+                                    } else if (isExcludedPersistent) {
+                                      isIncluded = false;
+                                    } else {
+                                      isIncluded = detail.included;
+                                    }
+                                    return isIncluded ? 'Included' : 'Excluded';
+                                  })()}
+                                </button>
                               </td>
                             </tr>
-                          ))}
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
