@@ -496,7 +496,7 @@ export default function Dashboard() {
                       const filteredUsers = data.users.filter(user => user.userName !== 'Brandegee Pierce');
                       const filteredPreviousPeriod = previousPeriodData ? {
                         ...previousPeriodData,
-                        userSummaries: previousPeriodData.userSummaries.filter(user => user.userName !== 'Brandegee Pierce'),
+                        userSummaries: previousPeriodData.userSummaries.filter((user: UserSummary) => user.userName !== 'Brandegee Pierce'),
                       } : null;
                       
                       // Call analysis API
