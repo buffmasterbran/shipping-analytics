@@ -241,48 +241,6 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* User Toggle Controls */}
-          {!loading && !error && data && data.users.length > 0 && (
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-medium text-gray-700">Show/Hide Users</h3>
-                <button
-                  onClick={toggleAllUsers}
-                  className="text-xs text-blue-600 hover:text-blue-800 font-medium"
-                >
-                  {visibleUsers.size === userNames.length ? 'Hide All' : 'Show All'}
-                </button>
-              </div>
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                {userNames.map((userName) => (
-                  <label
-                    key={userName}
-                    className="flex items-center cursor-pointer group p-2 hover:bg-gray-50 rounded-md transition-colors"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={visibleUsers.has(userName)}
-                      onChange={() => toggleUser(userName)}
-                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                    />
-                    <span
-                      className="ml-3 text-sm font-medium flex items-center flex-1"
-                      style={{
-                        color: visibleUsers.has(userName) ? userColorMap[userName] : '#9ca3af',
-                        opacity: visibleUsers.has(userName) ? 1 : 0.5,
-                      }}
-                    >
-                      <span
-                        className="inline-block w-3 h-3 rounded-full mr-2"
-                        style={{ backgroundColor: userColorMap[userName] }}
-                      />
-                      {userName}
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </div>
 
@@ -315,6 +273,48 @@ export default function Dashboard() {
         )}
 
         <div className="flex-1 p-6">
+          {/* User Toggle Controls - Moved to top of main section */}
+          {!loading && !error && data && data.users.length > 0 && (
+            <div className="bg-white rounded-lg shadow-md p-4 mb-6">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-medium text-gray-700">Show/Hide Users</h3>
+                <button
+                  onClick={toggleAllUsers}
+                  className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                >
+                  {visibleUsers.size === userNames.length ? 'Hide All' : 'Show All'}
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-4">
+                {userNames.map((userName) => (
+                  <label
+                    key={userName}
+                    className="flex items-center cursor-pointer group"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={visibleUsers.has(userName)}
+                      onChange={() => toggleUser(userName)}
+                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    />
+                    <span
+                      className="ml-2 text-sm font-medium flex items-center"
+                      style={{
+                        color: visibleUsers.has(userName) ? userColorMap[userName] : '#9ca3af',
+                        opacity: visibleUsers.has(userName) ? 1 : 0.5,
+                      }}
+                    >
+                      <span
+                        className="inline-block w-3 h-3 rounded-full mr-2"
+                        style={{ backgroundColor: userColorMap[userName] }}
+                      />
+                      {userName}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Loading State */}
           {loading && (
@@ -337,22 +337,35 @@ export default function Dashboard() {
               {/* Chart and User Table Combined */}
               {chartData.length > 0 ? (
                 <div className="bg-white rounded-lg shadow-md mb-6">
-                  <button
-                    onClick={() => setShowChart(!showChart)}
-                    className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-gray-50 transition-colors rounded-lg"
-                  >
-                    <h2 className="text-lg font-semibold text-gray-800">
-                      Shipments Per Hour by User
-                    </h2>
-                    <svg
-                      className={`w-5 h-5 text-gray-500 transform transition-transform ${showChart ? 'rotate-180' : ''}`}
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
+                  <div className="px-6 py-4 border-b border-gray-200">
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-lg font-semibold text-gray-800">
+                        {(() => {
+                          // Determine if this is daily data (date range > 1 day)
+                          const startDateObj = new Date(data.startDate);
+                          const endDateObj = new Date(data.endDate);
+                          const daysDiff = Math.abs((endDateObj.getTime() - startDateObj.getTime()) / (1000 * 60 * 60 * 24));
+                          return daysDiff > 1 
+                            ? 'Shipments Per Day by User' 
+                            : 'Shipments Per Hour by User';
+                        })()}
+                      </h2>
+                      <button
+                        onClick={() => setShowChart(!showChart)}
+                        className="p-2 hover:bg-gray-100 rounded-md transition-colors"
+                        aria-label="Toggle chart"
+                      >
+                        <svg
+                          className={`w-5 h-5 text-gray-500 transform transition-transform ${showChart ? 'rotate-180' : ''}`}
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
                   
                   {showChart && (
                     <div className="px-6 pb-6">
@@ -405,7 +418,7 @@ export default function Dashboard() {
                               formatter={(value: number) => [value, 'Shipments']}
                             />
                             <Legend
-                              wrapperStyle={{ paddingTop: '20px' }}
+                              wrapperStyle={{ display: 'none' }}
                               iconType="line"
                             />
                             {visibleUserNames.map((userName) => (
