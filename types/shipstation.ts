@@ -41,6 +41,10 @@ export interface PackingTimeDetail {
   previousTime: string; // ISO timestamp
   timeDifferenceMinutes: number;
   included: boolean; // Whether this was included in the average calculation
+  // Legacy fields for backward compatibility (used in some places)
+  previousShipmentTimestamp?: string; // ISO string
+  currentShipmentTimestamp?: string; // ISO string
+  includedInAverage?: boolean;
 }
 
 export interface BoxSizeStats {
