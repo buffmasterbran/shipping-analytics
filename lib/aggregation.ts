@@ -371,7 +371,7 @@ export function aggregateShipmentsByHour(
       
       // Convert box size map to object and calculate stats
       const boxSizeBreakdown: Record<string, number> = {};
-      const boxSizeStats: Record<string, { count: number; averageTimeMinutes?: number; goalMinutes?: number; isMeetingGoal?: boolean }> = {};
+      const boxSizeStats: Record<string, { count: number; averageTimeMinutes?: number; goalMinutes?: number; isMeetingGoal?: boolean; packingTimeDetails?: Array<{ currentBoxSize: string; currentTime: string; previousBoxSize: string; previousTime: string; timeDifferenceMinutes: number; included: boolean }> }> = {};
       const boxSizeMap = userBoxSizes.get(userKey);
       const timestampsMap = userBoxSizeTimestamps.get(userKey);
       
@@ -710,7 +710,7 @@ export function aggregateShipmentsByDay(
       
       // Convert box size map to object and calculate stats
       const boxSizeBreakdown: Record<string, number> = {};
-      const boxSizeStats: Record<string, { count: number; averageTimeMinutes?: number; goalMinutes?: number; isMeetingGoal?: boolean }> = {};
+      const boxSizeStats: Record<string, { count: number; averageTimeMinutes?: number; goalMinutes?: number; isMeetingGoal?: boolean; packingTimeDetails?: Array<{ currentBoxSize: string; currentTime: string; previousBoxSize: string; previousTime: string; timeDifferenceMinutes: number; included: boolean }> }> = {};
       const boxSizeMap = userBoxSizes.get(userKey);
       const timestampsMap = userBoxSizeTimestamps.get(userKey);
       
