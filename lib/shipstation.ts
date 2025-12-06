@@ -64,8 +64,9 @@ export async function fetchAllShipments(
 
 /**
  * Fetch all users from ShipStation
+ * @param showInactive - Whether to include inactive users (default: false to get only active users)
  */
-export async function fetchAllUsers(): Promise<ShipStationUser[]> {
+export async function fetchAllUsers(showInactive: boolean = false): Promise<ShipStationUser[]> {
   const authHeader = getAuthHeader();
   const allUsers: ShipStationUser[] = [];
   let page = 1;
@@ -73,6 +74,7 @@ export async function fetchAllUsers(): Promise<ShipStationUser[]> {
 
   while (hasMore) {
     const url = new URL(`${SHIPSTATION_BASE_URL}/users`);
+    url.searchParams.set('showInactive', showInactive.toString());
     url.searchParams.set('page', page.toString());
     url.searchParams.set('pageSize', '500');
 

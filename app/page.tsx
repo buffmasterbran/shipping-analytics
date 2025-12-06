@@ -6,6 +6,29 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsi
 import type { ShipmentsHourlyResponse, HourlySeriesPoint } from '@/types/shipstation';
 import DateRangePicker from '@/components/DateRangePicker';
 
+/**
+ * Determine packing time status based on average time and goal
+ * Returns: 'AMAZING' | 'Ok' | 'NEEDS Improvement'
+ * AMAZING: <= goal * 1.2 (20% buffer)
+ * Ok: > goal * 1.2 but <= goal * 2
+ * NEEDS Improvement: > goal * 2
+ */
+function getPackingTimeStatus(averageTimeMinutes: number | undefined, goalMinutes: number | undefined): 'AMAZING' | 'Ok' | 'NEEDS Improvement' | undefined {
+  if (averageTimeMinutes === undefined || goalMinutes === undefined) {
+    return undefined;
+  }
+  
+  const amazingThreshold = goalMinutes * 1.2; // 20% increase for AMAZING
+  
+  if (averageTimeMinutes <= amazingThreshold) {
+    return 'AMAZING';
+  } else if (averageTimeMinutes <= goalMinutes * 2) {
+    return 'Ok';
+  } else {
+    return 'NEEDS Improvement';
+  }
+}
+
 export default function Dashboard() {
   const [data, setData] = useState<ShipmentsHourlyResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -17,12 +40,47 @@ export default function Dashboard() {
   const [showRawData, setShowRawData] = useState(false);
   const [visibleUsers, setVisibleUsers] = useState<Set<string>>(new Set());
   const [sidebarOpen, setSidebarOpen] = useState(true); // Sidebar open by default
+  const [allUsers, setAllUsers] = useState<Array<{ userId: string | number; userName?: string; name?: string }>>([]);
   const [openBoxDropdown, setOpenBoxDropdown] = useState<string | null>(null);
   const [detailModal, setDetailModal] = useState<{ userId: string; userName: string; boxSize: string } | null>(null);
   // Track manual inclusion/exclusion overrides for detail modal entries
   const [detailModalOverrides, setDetailModalOverrides] = useState<Map<number, boolean>>(new Map());
   // Persistent exclusions stored in localStorage: Map<`${userId}_${boxSize}`, Set<detailIndex>>
   const [persistentExclusions, setPersistentExclusions] = useState<Map<string, Set<number>>>(new Map());
+  // Smart Analysis state (for detail modal)
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState<{
+    suggestions: Array<{ index: number; action: 'exclude' | 'include'; reason: string; confidence: string }>;
+    summary: string;
+    patterns: string[];
+  } | null>(null);
+  
+  // High-level Performance Analysis state
+  const [analyzingPerformance, setAnalyzingPerformance] = useState(false);
+  const [performanceAnalysis, setPerformanceAnalysis] = useState<{
+    userComparison?: { topPerformers: string[]; needsImprovement: string[]; insights: string };
+    trends?: { improving: string[]; declining: string[]; insights: string };
+    boxSizeInsights?: Array<{ boxSize: string; status: string; users: string[]; insight: string }>;
+    overallSummary?: string;
+    recommendations?: string[];
+  } | null>(null);
+  
+  // Fetch all users on page load (including inactive) to have complete user mapping
+  useEffect(() => {
+    const fetchUsers = async () => {
+      try {
+        const response = await fetch('/api/users');
+        if (response.ok) {
+          const userData = await response.json();
+          setAllUsers(userData.users || []);
+          console.log(`Loaded ${userData.users?.length || 0} users on page load`);
+        }
+      } catch (error) {
+        console.error('Failed to fetch users on page load:', error);
+      }
+    };
+    fetchUsers();
+  }, []);
   
   // Load exclusions from localStorage on mount
   useEffect(() => {
@@ -64,6 +122,8 @@ export default function Dashboard() {
         overrides.set(index, false); // false means excluded
       });
       setDetailModalOverrides(overrides);
+      // Reset analysis when modal changes
+      setAnalysisResult(null);
     }
   }, [detailModal?.userId, detailModal?.boxSize, persistentExclusions]);
 
@@ -401,6 +461,185 @@ export default function Dashboard() {
           {/* Dashboard Content */}
           {!loading && !error && data && (
             <>
+              {/* Smart Analysis Button */}
+              <div className="mb-4 flex justify-end">
+                <button
+                  onClick={async () => {
+                    setAnalyzingPerformance(true);
+                    setPerformanceAnalysis(null);
+                    try {
+                      // Calculate previous period (same length as current period)
+                      const startDateObj = new Date(startDate);
+                      const endDateObj = new Date(endDate);
+                      const daysDiff = Math.ceil((endDateObj.getTime() - startDateObj.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                      
+                      // Fetch previous period data
+                      const prevEndDate = format(subDays(startDateObj, 1), 'yyyy-MM-dd');
+                      const prevStartDate = format(subDays(startDateObj, daysDiff), 'yyyy-MM-dd');
+                      
+                      let previousPeriodData = null;
+                      try {
+                        const prevResponse = await fetch(`/api/shipments/hourly?startDate=${prevStartDate}&endDate=${prevEndDate}`);
+                        if (prevResponse.ok) {
+                          const prevData = await prevResponse.json();
+                          previousPeriodData = {
+                            userSummaries: prevData.users,
+                            startDate: prevStartDate,
+                            endDate: prevEndDate,
+                          };
+                        }
+                      } catch (err) {
+                        console.log('Could not fetch previous period data:', err);
+                      }
+                      
+                      // Filter out admin account "Brandegee Pierce" from analysis
+                      const filteredUsers = data.users.filter(user => user.userName !== 'Brandegee Pierce');
+                      const filteredPreviousPeriod = previousPeriodData ? {
+                        ...previousPeriodData,
+                        userSummaries: previousPeriodData.userSummaries.filter(user => user.userName !== 'Brandegee Pierce'),
+                      } : null;
+                      
+                      // Call analysis API
+                      const response = await fetch('/api/analyze-performance', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          userSummaries: filteredUsers,
+                          startDate: data.startDate,
+                          endDate: data.endDate,
+                          previousPeriodData: filteredPreviousPeriod,
+                        }),
+                      });
+                      
+                      if (!response.ok) {
+                        throw new Error('Analysis failed');
+                      }
+                      
+                      const result = await response.json();
+                      if (result.success && result.analysis) {
+                        setPerformanceAnalysis(result.analysis);
+                      } else {
+                        throw new Error(result.error || 'Invalid response');
+                      }
+                    } catch (error) {
+                      console.error('Performance analysis error:', error);
+                      alert('Failed to analyze performance. Make sure OPENAI_API_KEY is configured.');
+                    } finally {
+                      setAnalyzingPerformance(false);
+                    }
+                  }}
+                  disabled={analyzingPerformance || !data}
+                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                >
+                  {analyzingPerformance ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Analyzing...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                      </svg>
+                      Smart Analysis
+                    </>
+                  )}
+                </button>
+              </div>
+              
+              {/* Performance Analysis Results */}
+              {performanceAnalysis && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
+                  <div className="flex items-start justify-between mb-4">
+                    <h3 className="text-lg font-semibold text-blue-900">Performance Analysis</h3>
+                    <button
+                      onClick={() => setPerformanceAnalysis(null)}
+                      className="text-blue-600 hover:text-blue-800"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                  
+                  {performanceAnalysis.overallSummary && (
+                    <div className="mb-4">
+                      <h4 className="text-sm font-semibold text-blue-900 mb-2">Summary</h4>
+                      <p className="text-sm text-blue-800">{performanceAnalysis.overallSummary}</p>
+                    </div>
+                  )}
+                  
+                  {performanceAnalysis.userComparison && (
+                    <div className="mb-4">
+                      <h4 className="text-sm font-semibold text-blue-900 mb-2">User Performance</h4>
+                      <p className="text-sm text-blue-800 mb-2">{performanceAnalysis.userComparison.insights}</p>
+                      {performanceAnalysis.userComparison.topPerformers && performanceAnalysis.userComparison.topPerformers.length > 0 && (
+                        <div className="text-sm text-green-700">
+                          <span className="font-medium">Top Performers: </span>
+                          {performanceAnalysis.userComparison.topPerformers.join(', ')}
+                        </div>
+                      )}
+                      {performanceAnalysis.userComparison.needsImprovement && performanceAnalysis.userComparison.needsImprovement.length > 0 && (
+                        <div className="text-sm text-red-700 mt-1">
+                          <span className="font-medium">Needs Improvement: </span>
+                          {performanceAnalysis.userComparison.needsImprovement.join(', ')}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {performanceAnalysis.trends && (
+                    <div className="mb-4">
+                      <h4 className="text-sm font-semibold text-blue-900 mb-2">Trends</h4>
+                      <p className="text-sm text-blue-800 mb-2">{performanceAnalysis.trends.insights}</p>
+                      {performanceAnalysis.trends.improving && performanceAnalysis.trends.improving.length > 0 && (
+                        <div className="text-sm text-green-700">
+                          <span className="font-medium">Improving: </span>
+                          {performanceAnalysis.trends.improving.join(', ')}
+                        </div>
+                      )}
+                      {performanceAnalysis.trends.declining && performanceAnalysis.trends.declining.length > 0 && (
+                        <div className="text-sm text-red-700 mt-1">
+                          <span className="font-medium">Declining: </span>
+                          {performanceAnalysis.trends.declining.join(', ')}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {performanceAnalysis.boxSizeInsights && performanceAnalysis.boxSizeInsights.length > 0 && (
+                    <div className="mb-4">
+                      <h4 className="text-sm font-semibold text-blue-900 mb-2">Box Size Insights</h4>
+                      <div className="space-y-2">
+                        {performanceAnalysis.boxSizeInsights.map((insight, idx) => (
+                          <div key={idx} className="text-sm bg-white rounded p-2 border border-blue-200">
+                            <div className="font-medium text-blue-900">{insight.boxSize}</div>
+                            <div className="text-blue-700 mt-1">{insight.insight}</div>
+                            {insight.users && insight.users.length > 0 && (
+                              <div className="text-xs text-blue-600 mt-1">Users: {insight.users.join(', ')}</div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {performanceAnalysis.recommendations && performanceAnalysis.recommendations.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-semibold text-blue-900 mb-2">Recommendations</h4>
+                      <ul className="list-disc list-inside space-y-1 text-sm text-blue-800">
+                        {performanceAnalysis.recommendations.map((rec, idx) => (
+                          <li key={idx}>{rec}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+              
               {/* Chart and User Table Combined */}
               {chartData.length > 0 ? (
                 <div className="bg-white rounded-lg shadow-md mb-6">
@@ -639,7 +878,6 @@ export default function Dashboard() {
                                                       const exclusionKey = `${user.userId}_${boxSize}`;
                                                       const excludedIndices = persistentExclusions.get(exclusionKey) || new Set<number>();
                                                       let avgTime = boxStats?.averageTimeMinutes;
-                                                      let isMeetingGoal = boxStats?.isMeetingGoal;
                                                       
                                                       if (boxStats?.packingTimeDetails && excludedIndices.size > 0) {
                                                         const includedTimes = boxStats.packingTimeDetails
@@ -651,14 +889,11 @@ export default function Dashboard() {
                                                         
                                                         if (includedTimes.length > 0) {
                                                           avgTime = includedTimes.reduce((sum, time) => sum + time, 0) / includedTimes.length;
-                                                          const goal = boxStats.goalMinutes;
-                                                          if (goal !== undefined) {
-                                                            isMeetingGoal = avgTime <= goal;
-                                                          }
                                                         }
                                                       }
                                                       
                                                       const goal = boxStats?.goalMinutes;
+                                                      const status = getPackingTimeStatus(avgTime, goal);
                                                       
                                                       return (
                                                         <tr key={boxSize} className="hover:bg-gray-50">
@@ -678,7 +913,7 @@ export default function Dashboard() {
                                                             {goal !== undefined ? `${goal} min` : '—'}
                                                           </td>
                                                           <td className="px-4 py-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                                                            {isMeetingGoal !== undefined ? (
+                                                            {status !== undefined ? (
                                                               <button
                                                                 type="button"
                                                                 onClick={(e) => {
@@ -687,13 +922,15 @@ export default function Dashboard() {
                                                                   setDetailModal({ userId: user.userId, userName: user.userName, boxSize });
                                                                 }}
                                                                 className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium cursor-pointer hover:opacity-80 transition-opacity ${
-                                                                  isMeetingGoal 
+                                                                  status === 'AMAZING'
                                                                     ? 'bg-green-100 text-green-800' 
+                                                                    : status === 'Ok'
+                                                                    ? 'bg-yellow-100 text-yellow-800'
                                                                     : 'bg-red-100 text-red-800'
                                                                 }`}
                                                                 title="Click to see calculation details"
                                                               >
-                                                                {isMeetingGoal ? '✓ Meeting Goal' : '✗ Missing Goal'}
+                                                                {status === 'AMAZING' ? '✓ AMAZING' : status === 'Ok' ? '○ Ok' : '✗ NEEDS Improvement'}
                                                               </button>
                                                             ) : (
                                                               <span className="text-gray-400 text-xs">—</span>
@@ -873,44 +1110,211 @@ export default function Dashboard() {
                   <p className="text-sm text-gray-600 mt-1">
                     {detailModal.userName} - {detailModal.boxSize}
                   </p>
-                  {boxStats && (
-                    <div className="text-sm text-gray-500 mt-1">
-                      {recalculatedAverage !== undefined && (excludedIndices.size > 0 || detailModalOverrides.size > 0) ? (
-                        <>
+                  {boxStats && (() => {
+                    const displayAverage = recalculatedAverage !== undefined && (excludedIndices.size > 0 || detailModalOverrides.size > 0) 
+                      ? recalculatedAverage 
+                      : boxStats.averageTimeMinutes;
+                    const displayStatus = getPackingTimeStatus(displayAverage, boxStats.goalMinutes);
+                    
+                    return (
+                      <div className="text-sm text-gray-500 mt-1">
+                        {recalculatedAverage !== undefined && (excludedIndices.size > 0 || detailModalOverrides.size > 0) ? (
+                          <>
+                            <p>
+                              Original Average: {boxStats.averageTimeMinutes?.toFixed(1)} min | Goal: {boxStats.goalMinutes} min
+                            </p>
+                            <p className="font-medium mt-1">
+                              Recalculated Average: {recalculatedAverage.toFixed(1)} min
+                              {displayStatus && (
+                                <span className={`ml-2 ${
+                                  displayStatus === 'AMAZING' ? 'text-green-600' : 
+                                  displayStatus === 'Ok' ? 'text-yellow-600' : 
+                                  'text-red-600'
+                                }`}>
+                                  ({displayStatus})
+                                </span>
+                              )}
+                            </p>
+                          </>
+                        ) : (
                           <p>
-                            Original Average: {boxStats.averageTimeMinutes?.toFixed(1)} min | Goal: {boxStats.goalMinutes} min
-                          </p>
-                          <p className="text-blue-600 font-medium mt-1">
-                            Recalculated Average: {recalculatedAverage.toFixed(1)} min
-                            {boxStats.goalMinutes && (
-                              <span className={recalculatedAverage <= boxStats.goalMinutes ? ' text-green-600' : ' text-red-600'}>
-                                {' '}({recalculatedAverage <= boxStats.goalMinutes ? 'Meeting' : 'Missing'} Goal)
+                            Average: {boxStats.averageTimeMinutes?.toFixed(1)} min | Goal: {boxStats.goalMinutes} min
+                            {displayStatus && (
+                              <span className={`ml-2 ${
+                                displayStatus === 'AMAZING' ? 'text-green-600' : 
+                                displayStatus === 'Ok' ? 'text-yellow-600' : 
+                                'text-red-600'
+                              }`}>
+                                ({displayStatus})
                               </span>
                             )}
                           </p>
-                        </>
-                      ) : (
-                        <p>
-                          Average: {boxStats.averageTimeMinutes?.toFixed(1)} min | Goal: {boxStats.goalMinutes} min
-                        </p>
-                      )}
-                    </div>
-                  )}
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
-                <button
-                  onClick={handleModalClose}
-                  className="text-gray-400 hover:text-gray-600 transition-colors"
-                >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={async () => {
+                      setAnalyzing(true);
+                      setAnalysisResult(null);
+                      try {
+                        const response = await fetch('/api/analyze-packing-times', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            packingTimeDetails: details,
+                            userName: detailModal.userName,
+                            boxSize: detailModal.boxSize,
+                            goalMinutes: boxStats?.goalMinutes,
+                          }),
+                        });
+                        
+                        if (!response.ok) {
+                          throw new Error('Analysis failed');
+                        }
+                        
+                        const result = await response.json();
+                        if (result.success && result.analysis) {
+                          setAnalysisResult(result.analysis);
+                        } else {
+                          throw new Error(result.error || 'Invalid response');
+                        }
+                      } catch (error) {
+                        console.error('Analysis error:', error);
+                        alert('Failed to analyze packing times. Make sure OPENAI_API_KEY is configured.');
+                      } finally {
+                        setAnalyzing(false);
+                      }
+                    }}
+                    disabled={analyzing || details.length === 0}
+                    className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                  >
+                    {analyzing ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Analyzing...
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                        </svg>
+                        Smart Analysis
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={handleModalClose}
+                    className="text-gray-400 hover:text-gray-600 transition-colors"
+                  >
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
               </div>
 
               {/* Content */}
               <div className="flex-1 overflow-y-auto p-6">
                 {details.length > 0 ? (
                   <div className="space-y-4">
+                    {/* Analysis Results */}
+                    {analysisResult && (
+                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                        <div className="flex items-start justify-between mb-2">
+                          <h3 className="text-sm font-semibold text-blue-900">AI Analysis Results</h3>
+                          <button
+                            onClick={() => setAnalysisResult(null)}
+                            className="text-blue-600 hover:text-blue-800"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                        {analysisResult.summary && (
+                          <p className="text-sm text-blue-800 mb-3">{analysisResult.summary}</p>
+                        )}
+                        {analysisResult.patterns && analysisResult.patterns.length > 0 && (
+                          <div className="mb-3">
+                            <p className="text-xs font-medium text-blue-900 mb-1">Patterns Detected:</p>
+                            <ul className="text-xs text-blue-700 list-disc list-inside">
+                              {analysisResult.patterns.map((pattern, idx) => (
+                                <li key={idx}>{pattern}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {analysisResult.suggestions && analysisResult.suggestions.length > 0 && (
+                          <div>
+                            <p className="text-xs font-medium text-blue-900 mb-2">Suggestions:</p>
+                            <div className="space-y-2 max-h-40 overflow-y-auto">
+                              {analysisResult.suggestions.map((suggestion, idx) => {
+                                const originalIndex = originalIndexMap.get(
+                                  sortedDetails.findIndex((d, i) => {
+                                    const origIdx = originalIndexMap.get(i);
+                                    return origIdx === suggestion.index;
+                                  }) ?? -1
+                                ) ?? suggestion.index;
+                                
+                                return (
+                                  <div key={idx} className="text-xs bg-white rounded p-2 border border-blue-200">
+                                    <div className="flex items-center justify-between">
+                                      <span className="font-medium">
+                                        Entry {suggestion.index + 1}: {suggestion.action === 'exclude' ? 'Exclude' : 'Include'}
+                                      </span>
+                                      <span className={`px-1.5 py-0.5 rounded text-xs ${
+                                        suggestion.confidence === 'high' ? 'bg-green-100 text-green-800' :
+                                        suggestion.confidence === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                                        'bg-gray-100 text-gray-800'
+                                      }`}>
+                                        {suggestion.confidence}
+                                      </span>
+                                    </div>
+                                    <p className="text-gray-600 mt-1">{suggestion.reason}</p>
+                                    <button
+                                      onClick={() => {
+                                        const newOverrides = new Map(detailModalOverrides);
+                                        newOverrides.set(originalIndex, suggestion.action === 'include');
+                                        setDetailModalOverrides(newOverrides);
+                                        
+                                        // Also update persistent exclusions
+                                        const exclusionKey = `${detailModal.userId}_${detailModal.boxSize}`;
+                                        const newExclusions = new Map(persistentExclusions);
+                                        const excludedIndices = newExclusions.get(exclusionKey) || new Set<number>();
+                                        
+                                        if (suggestion.action === 'exclude') {
+                                          excludedIndices.add(originalIndex);
+                                        } else {
+                                          excludedIndices.delete(originalIndex);
+                                        }
+                                        
+                                        if (excludedIndices.size > 0) {
+                                          newExclusions.set(exclusionKey, excludedIndices);
+                                        } else {
+                                          newExclusions.delete(exclusionKey);
+                                        }
+                                        
+                                        setPersistentExclusions(newExclusions);
+                                      }}
+                                      className="mt-1 text-xs text-blue-600 hover:text-blue-800 underline"
+                                    >
+                                      Apply suggestion
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
                     <div className="text-sm text-gray-600 mb-4">
                       Showing time differences between consecutive shipments. Times marked in <span className="text-green-600 font-medium">green</span> were included in the average calculation, times marked in <span className="text-red-600 font-medium">red</span> were excluded (likely breaks).
                       <br />

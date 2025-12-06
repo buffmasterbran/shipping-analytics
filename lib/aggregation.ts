@@ -6,6 +6,7 @@ import type { HourlySeriesPoint, UserSummary } from '@/types/shipstation';
 const TIMEZONE = 'America/New_York';
 const SHIPSTATION_TIMEZONE = 'America/Los_Angeles'; // ShipStation returns times in Pacific Time
 
+
 /**
  * Packing time goals in minutes per box size
  */
@@ -245,25 +246,61 @@ export function aggregateShipmentsByHour(
       }
     }
     
-    // Fallback to User ID if no match found
+    // Fallback: Try one more time with a more aggressive search
     if (!userName) {
-      userName = `User ${userId}`;
-      // Debug: Log when we can't find a user name - log all instances for UUIDs
-      if (typeof shipment.userId === 'string' && shipment.userId.includes('-')) {
-        // This is a UUID, log it
-        console.log(`[Hourly Aggregation] Could not find user name for UUID userId: ${shipment.userId}`);
-        console.log(`UserMap has this exact key?`, userMap.has(shipment.userId));
-        console.log(`UserMap has lowercase?`, userMap.has(shipment.userId.toLowerCase()));
-        console.log(`UserMap has no hyphens?`, userMap.has(shipment.userId.replace(/-/g, '')));
-        console.log(`Sample userMap keys (first 10):`, Array.from(userMap.keys()).slice(0, 10));
-        console.log(`UserMap size:`, userMap.size);
-        // Try to find a partial match
-        for (const [key, value] of userMap.entries()) {
-          const keyStr = typeof key === 'string' ? key : key.toString();
-          if (keyStr.toLowerCase().includes(shipment.userId.toLowerCase().substring(0, 8))) {
-            console.log(`Found partial match: ${keyStr} -> ${value}`);
+      // Try searching through all userMap entries for any match
+      for (const [key, value] of userMap.entries()) {
+        const keyStr = typeof key === 'string' ? key : key.toString();
+        const shipmentIdStr = typeof shipment.userId === 'string' ? shipment.userId : shipment.userId.toString();
+        
+        // Try exact match (case-insensitive)
+        if (keyStr.toLowerCase() === shipmentIdStr.toLowerCase()) {
+          userName = value;
+          break;
+        }
+        
+        // Try matching without hyphens (for UUIDs)
+        if (shipmentIdStr.includes('-') || keyStr.includes('-')) {
+          const keyNoHyphens = keyStr.replace(/-/g, '').toLowerCase();
+          const shipmentNoHyphens = shipmentIdStr.replace(/-/g, '').toLowerCase();
+          if (keyNoHyphens === shipmentNoHyphens) {
+            userName = value;
+            break;
           }
         }
+      }
+    }
+    
+    // Final fallback - this should never happen if userMap is properly populated
+    // But if it does, use the userId and log an error
+    if (!userName) {
+      // Try one last aggressive search through all userMap values
+      const shipmentIdStr = typeof shipment.userId === 'string' ? shipment.userId : shipment.userId.toString();
+      const shipmentIdLower = shipmentIdStr.toLowerCase();
+      const shipmentIdNoHyphens = shipmentIdLower.replace(/-/g, '');
+      
+      for (const [key, value] of userMap.entries()) {
+        const keyStr = typeof key === 'string' ? key : key.toString();
+        const keyLower = keyStr.toLowerCase();
+        const keyNoHyphens = keyLower.replace(/-/g, '');
+        
+        // Try all variations
+        if (keyLower === shipmentIdLower || 
+            keyNoHyphens === shipmentIdNoHyphens ||
+            keyStr === shipmentIdStr) {
+          userName = value;
+          break;
+        }
+      }
+      
+      // If still not found, log detailed error
+      if (!userName) {
+        console.error(`[Hourly Aggregation] CRITICAL: Could not find user name for userId: ${shipment.userId}`);
+        console.error(`UserMap size:`, userMap.size);
+        console.error(`UserMap sample keys:`, Array.from(userMap.keys()).slice(0, 10));
+        console.error(`Shipment userId type:`, typeof shipment.userId, `value:`, shipment.userId);
+        // Use userId as fallback but log it
+        userName = userId;
       }
     }
     
@@ -597,12 +634,61 @@ export function aggregateShipmentsByDay(
       }
     }
     
-    // Fallback to User ID if no match found
+    // Fallback: Try one more time with a more aggressive search
     if (!userName) {
-      userName = `User ${userId}`;
-      // Debug: Log UUIDs that can't be matched
-      if (typeof shipment.userId === 'string' && shipment.userId.includes('-')) {
-        console.log(`[Daily Aggregation] Could not find user name for UUID: ${shipment.userId}`);
+      // Try searching through all userMap entries for any match
+      for (const [key, value] of userMap.entries()) {
+        const keyStr = typeof key === 'string' ? key : key.toString();
+        const shipmentIdStr = typeof shipment.userId === 'string' ? shipment.userId : shipment.userId.toString();
+        
+        // Try exact match (case-insensitive)
+        if (keyStr.toLowerCase() === shipmentIdStr.toLowerCase()) {
+          userName = value;
+          break;
+        }
+        
+        // Try matching without hyphens (for UUIDs)
+        if (shipmentIdStr.includes('-') || keyStr.includes('-')) {
+          const keyNoHyphens = keyStr.replace(/-/g, '').toLowerCase();
+          const shipmentNoHyphens = shipmentIdStr.replace(/-/g, '').toLowerCase();
+          if (keyNoHyphens === shipmentNoHyphens) {
+            userName = value;
+            break;
+          }
+        }
+      }
+    }
+    
+    // Final fallback - this should never happen if userMap is properly populated
+    // But if it does, use the userId and log an error
+    if (!userName) {
+      // Try one last aggressive search through all userMap values
+      const shipmentIdStr = typeof shipment.userId === 'string' ? shipment.userId : shipment.userId.toString();
+      const shipmentIdLower = shipmentIdStr.toLowerCase();
+      const shipmentIdNoHyphens = shipmentIdLower.replace(/-/g, '');
+      
+      for (const [key, value] of userMap.entries()) {
+        const keyStr = typeof key === 'string' ? key : key.toString();
+        const keyLower = keyStr.toLowerCase();
+        const keyNoHyphens = keyLower.replace(/-/g, '');
+        
+        // Try all variations
+        if (keyLower === shipmentIdLower || 
+            keyNoHyphens === shipmentIdNoHyphens ||
+            keyStr === shipmentIdStr) {
+          userName = value;
+          break;
+        }
+      }
+      
+      // If still not found, log detailed error
+      if (!userName) {
+        console.error(`[Daily Aggregation] CRITICAL: Could not find user name for userId: ${shipment.userId}`);
+        console.error(`UserMap size:`, userMap.size);
+        console.error(`UserMap sample keys:`, Array.from(userMap.keys()).slice(0, 10));
+        console.error(`Shipment userId type:`, typeof shipment.userId, `value:`, shipment.userId);
+        // Use userId as fallback but log it
+        userName = userId;
       }
     }
     

@@ -3,7 +3,7 @@ import { format, startOfDay, endOfDay, differenceInDays } from 'date-fns';
 import { zonedTimeToUtc, utcToZonedTime } from 'date-fns-tz';
 import { fetchAllShipments, fetchAllUsers } from '@/lib/shipstation';
 import { aggregateShipmentsByHour, aggregateShipmentsByDay } from '@/lib/aggregation';
-import type { ShipmentsHourlyResponse } from '@/types/shipstation';
+import type { ShipmentsHourlyResponse, ShipStationUser } from '@/types/shipstation';
 
 const TIMEZONE = 'America/New_York';
 
@@ -48,19 +48,22 @@ export async function GET(request: NextRequest) {
       TIMEZONE
     ).toISOString();
 
-    // Fetch users first to get name mappings
-    const users = await fetchAllUsers();
+    // Step 1: Fetch active users first to get name mappings
+    const activeUsers = await fetchAllUsers(false);
     const userMap = new Map<string | number, string>();
     
     // Debug: Log first few users to see structure
-    if (users.length > 0) {
-      console.log('Sample user from API:', JSON.stringify(users[0], null, 2));
+    if (activeUsers.length > 0) {
+      console.log('Sample active user from API:', JSON.stringify(activeUsers[0], null, 2));
+      console.log(`Total active users fetched: ${activeUsers.length}`);
+      console.log('Sample active user IDs:', activeUsers.slice(0, 5).map(u => ({ userId: u.userId, name: u.name || u.userName, type: typeof u.userId })));
     }
     
-    users.forEach(user => {
+    // Helper function to add user to userMap with all variations
+    const addUserToMap = (user: ShipStationUser) => {
       const userId = typeof user.userId === 'string' ? user.userId : user.userId.toString();
       // Prefer 'name' field over 'userName' for display (name is the display name)
-      const displayName = user.name || user.userName || `User ${userId}`;
+      const displayName = user.name || user.userName || userId;
       
       // Store with multiple key formats for reliable lookup
       // Store original userId (preserves type: string or number)
@@ -69,12 +72,18 @@ export async function GET(request: NextRequest) {
       // Always store string version
       userMap.set(userId, displayName);
       
-      // If it's a UUID (contains hyphens), store lowercase version
+      // If it's a UUID (contains hyphens), store multiple variations
       if (typeof user.userId === 'string' && user.userId.includes('-')) {
-        userMap.set(user.userId.toLowerCase(), displayName);
-        // Also store without hyphens for matching
-        userMap.set(user.userId.replace(/-/g, ''), displayName);
-        userMap.set(user.userId.replace(/-/g, '').toLowerCase(), displayName);
+        const lowerUserId = user.userId.toLowerCase();
+        const noHyphens = user.userId.replace(/-/g, '');
+        const noHyphensLower = noHyphens.toLowerCase();
+        
+        userMap.set(lowerUserId, displayName);
+        userMap.set(noHyphens, displayName);
+        userMap.set(noHyphensLower, displayName);
+        
+        // Also try with uppercase
+        userMap.set(user.userId.toUpperCase(), displayName);
       }
       
       // If it's a numeric string, also store as number
@@ -86,26 +95,123 @@ export async function GET(request: NextRequest) {
       if (typeof user.userId === 'number') {
         userMap.set(userId, displayName);
       }
+    };
+    
+    // Add all active users to the map
+    activeUsers.forEach(user => {
+      addUserToMap(user);
     });
     
-    // Debug: Log userMap contents
-    console.log(`UserMap populated with ${userMap.size} entries`);
-    if (users.length > 0) {
-      console.log('Sample user from API:', {
-        userId: users[0].userId,
-        userIdType: typeof users[0].userId,
-        name: users[0].name,
-        userName: users[0].userName
-      });
-    }
-
     // Fetch all shipments
     const shipments = await fetchAllShipments(startUTC, endUTC);
     
-    // Debug: Log sample shipment to see userId structure
-    if (shipments.length > 0) {
-      console.log('Sample shipment userId:', shipments[0].userId, typeof shipments[0].userId);
-      console.log('User map has this userId?', userMap.has(shipments[0].userId));
+    // Extract unique user IDs from shipments and check for missing ones
+    const shipmentUserIds = new Set<string | number>();
+    shipments.forEach(shipment => {
+      shipmentUserIds.add(shipment.userId);
+    });
+    
+    // Step 2: Find user IDs from shipments that aren't in our active userMap
+    const missingUserIds: Array<string | number> = [];
+    shipmentUserIds.forEach(userId => {
+      const userIdStr = typeof userId === 'string' ? userId : userId.toString();
+      let found = userMap.has(userId);
+      
+      if (!found) {
+        // Try lowercase/uppercase
+        if (typeof userId === 'string') {
+          found = userMap.has(userId.toLowerCase()) || userMap.has(userId.toUpperCase());
+        }
+        // Try without hyphens
+        if (!found && typeof userId === 'string' && userId.includes('-')) {
+          const noHyphens = userId.replace(/-/g, '');
+          found = userMap.has(noHyphens) || userMap.has(noHyphens.toLowerCase()) || userMap.has(noHyphens.toUpperCase());
+        }
+      }
+      
+      if (!found) {
+        missingUserIds.push(userId);
+      }
+    });
+    
+    // Step 3: If we have missing user IDs, fetch inactive users and only add the ones we need
+    if (missingUserIds.length > 0) {
+      console.log(`Found ${missingUserIds.length} user IDs in shipments that aren't in active users. Fetching inactive users to match...`);
+      
+      // Create a Set of active user IDs for quick lookup (normalized)
+      const activeUserIdsSet = new Set<string>();
+      activeUsers.forEach(user => {
+        const userId = typeof user.userId === 'string' ? user.userId : user.userId.toString();
+        activeUserIdsSet.add(userId.toLowerCase());
+        activeUserIdsSet.add(userId.toLowerCase().replace(/-/g, ''));
+        if (typeof user.userId === 'string' && user.userId.includes('-')) {
+          activeUserIdsSet.add(user.userId.toLowerCase());
+          activeUserIdsSet.add(user.userId.replace(/-/g, '').toLowerCase());
+        }
+      });
+      
+      // Fetch inactive users (showInactive=true gets ALL users including active)
+      const allUsers = await fetchAllUsers(true);
+      console.log(`Fetched ${allUsers.length} total users (active + inactive)`);
+      
+      // Filter to only inactive users (those not in activeUsers)
+      const inactiveUsers = allUsers.filter(user => {
+        const userId = typeof user.userId === 'string' ? user.userId : user.userId.toString();
+        const userIdLower = userId.toLowerCase();
+        const userIdNoHyphens = userIdLower.replace(/-/g, '');
+        return !activeUserIdsSet.has(userIdLower) && !activeUserIdsSet.has(userIdNoHyphens);
+      });
+      console.log(`Found ${inactiveUsers.length} inactive users`);
+      
+      // Only add inactive users that match our missing IDs
+      let addedCount = 0;
+      inactiveUsers.forEach(user => {
+        const userUserId = typeof user.userId === 'string' ? user.userId : user.userId.toString();
+        const userUserIdLower = userUserId.toLowerCase();
+        const userUserIdNoHyphens = userUserIdLower.replace(/-/g, '');
+        
+        // Check if this inactive user matches any of our missing IDs
+        const matchesMissingId = missingUserIds.some(missingId => {
+          const missingIdStr = typeof missingId === 'string' ? missingId : missingId.toString();
+          const missingIdLower = missingIdStr.toLowerCase();
+          const missingIdNoHyphens = missingIdLower.replace(/-/g, '');
+          
+          return userUserIdLower === missingIdLower ||
+                 userUserIdNoHyphens === missingIdNoHyphens ||
+                 userUserId === missingIdStr;
+        });
+        
+        // Only add if it matches a missing ID
+        if (matchesMissingId) {
+          addUserToMap(user);
+          addedCount++;
+          console.log(`  ✓ Added inactive user ${user.userId} (${user.name || user.userName}) to userMap`);
+        }
+      });
+      
+      console.log(`Added ${addedCount} inactive users to userMap for unmatched shipment user IDs`);
+      
+      // Log any that still couldn't be matched
+      const stillMissing: Array<string | number> = [];
+      missingUserIds.forEach(missingId => {
+        const missingIdStr = typeof missingId === 'string' ? missingId : missingId.toString();
+        let found = userMap.has(missingId);
+        if (!found && typeof missingId === 'string') {
+          found = userMap.has(missingId.toLowerCase()) || userMap.has(missingId.toUpperCase());
+        }
+        if (!found && typeof missingId === 'string' && missingId.includes('-')) {
+          const noHyphens = missingId.replace(/-/g, '');
+          found = userMap.has(noHyphens) || userMap.has(noHyphens.toLowerCase());
+        }
+        if (!found) {
+          stillMissing.push(missingId);
+        }
+      });
+      
+      if (stillMissing.length > 0) {
+        console.warn(`⚠️  Still missing ${stillMissing.length} user IDs after matching attempt. These users may not exist in ShipStation:`);
+        stillMissing.slice(0, 10).forEach(id => console.warn(`  - ${id}`));
+      }
     }
 
     // Determine if we should aggregate by day or hour
