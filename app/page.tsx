@@ -17,6 +17,31 @@ export default function Dashboard() {
   const [showRawData, setShowRawData] = useState(false);
   const [visibleUsers, setVisibleUsers] = useState<Set<string>>(new Set());
   const [sidebarOpen, setSidebarOpen] = useState(true); // Sidebar open by default
+  const [openBoxDropdown, setOpenBoxDropdown] = useState<string | null>(null);
+  const [detailModal, setDetailModal] = useState<{ userId: string; userName: string; boxSize: string } | null>(null);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      // Check if click is outside any dropdown
+      // Don't close if clicking inside the expanded box sizes table or status buttons
+      if (!target.closest('.box-dropdown-container') && 
+          !target.closest('table.min-w-full') && // Don't close when clicking in the expanded table
+          !target.closest('button[title="Click to see calculation details"]') && // Don't close when clicking status button
+          !target.closest('.fixed.inset-0')) { // Don't close when modal is open
+        setOpenBoxDropdown(null);
+      }
+    };
+
+    if (openBoxDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [openBoxDropdown]);
 
   const fetchData = async (start: string, end: string) => {
     setLoading(true);
@@ -470,6 +495,9 @@ export default function Dashboard() {
                                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                     Mins/Shipment
                                   </th>
+                                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Box Sizes
+                                  </th>
                                 </tr>
                               </thead>
                               <tbody className="bg-white divide-y divide-gray-200">
@@ -484,24 +512,134 @@ export default function Dashboard() {
                                       ? (user.shipmentsPerDay || 0)
                                       : (user.shipmentsPerHour || 0);
                                     const minsPerShipment = user.minutesPerShipment || 0;
+                                    const boxSizes = user.boxSizeBreakdown || {};
+                                    const boxSizeEntries = Object.entries(boxSizes).sort((a, b) => b[1] - a[1]); // Sort by count descending
+                                    const totalBoxCount = Object.values(boxSizes).reduce((sum, count) => sum + count, 0);
                                     return (
-                                      <tr key={user.userId}>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                                          {user.userName}
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                          {user.totalShipments.toLocaleString()}
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                          {percentage}%
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                          {rate.toFixed(1)}
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                          {minsPerShipment.toFixed(1)}
-                                        </td>
-                                      </tr>
+                                      <>
+                                        <tr key={user.userId} className="hover:bg-gray-50">
+                                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                            {user.userName}
+                                          </td>
+                                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                            {user.totalShipments.toLocaleString()}
+                                          </td>
+                                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                            {percentage}%
+                                          </td>
+                                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                            {rate.toFixed(1)}
+                                          </td>
+                                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                            {minsPerShipment.toFixed(1)}
+                                          </td>
+                                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                            {boxSizeEntries.length > 0 ? (
+                                              <button
+                                                onClick={() => setOpenBoxDropdown(openBoxDropdown === user.userId ? null : user.userId)}
+                                                className="p-1 hover:bg-gray-100 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer transition-colors"
+                                                title={`Box Sizes (${totalBoxCount})`}
+                                              >
+                                                <svg
+                                                  className={`w-5 h-5 text-gray-600 transition-transform ${openBoxDropdown === user.userId ? 'rotate-180' : ''}`}
+                                                  fill="none"
+                                                  stroke="currentColor"
+                                                  viewBox="0 0 24 24"
+                                                >
+                                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                                </svg>
+                                              </button>
+                                            ) : (
+                                              <span className="text-gray-400">—</span>
+                                            )}
+                                          </td>
+                                        </tr>
+                                        {openBoxDropdown === user.userId && boxSizeEntries.length > 0 && (
+                                          <tr className="bg-gray-50 box-dropdown-container" onClick={(e) => e.stopPropagation()}>
+                                            <td colSpan={6} className="px-6 py-4">
+                                              <div className="bg-white rounded-lg border border-gray-200 shadow-sm box-dropdown-container" onClick={(e) => e.stopPropagation()}>
+                                                <table className="min-w-full divide-y divide-gray-200">
+                                                  <thead className="bg-gray-50">
+                                                    <tr>
+                                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                        Box Size
+                                                      </th>
+                                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                        Count
+                                                      </th>
+                                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                        Percentage
+                                                      </th>
+                                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                        Avg Time
+                                                      </th>
+                                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                        Goal
+                                                      </th>
+                                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                        Status
+                                                      </th>
+                                                    </tr>
+                                                  </thead>
+                                                  <tbody className="bg-white divide-y divide-gray-200">
+                                                    {boxSizeEntries.map(([boxSize, count]) => {
+                                                      const boxPercentage = totalBoxCount > 0 
+                                                        ? ((count / totalBoxCount) * 100).toFixed(1) 
+                                                        : '0';
+                                                      const boxStats = user.boxSizeStats?.[boxSize];
+                                                      const avgTime = boxStats?.averageTimeMinutes;
+                                                      const goal = boxStats?.goalMinutes;
+                                                      const isMeetingGoal = boxStats?.isMeetingGoal;
+                                                      
+                                                      return (
+                                                        <tr key={boxSize} className="hover:bg-gray-50">
+                                                          <td className="px-4 py-2 whitespace-nowrap text-sm font-medium text-gray-900">
+                                                            {boxSize}
+                                                          </td>
+                                                          <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">
+                                                            {count.toLocaleString()}
+                                                          </td>
+                                                          <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
+                                                            {boxPercentage}%
+                                                          </td>
+                                                          <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">
+                                                            {avgTime !== undefined ? `${avgTime.toFixed(1)} min` : '—'}
+                                                          </td>
+                                                          <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-600">
+                                                            {goal !== undefined ? `${goal} min` : '—'}
+                                                          </td>
+                                                          <td className="px-4 py-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                                                            {isMeetingGoal !== undefined ? (
+                                                              <button
+                                                                type="button"
+                                                                onClick={(e) => {
+                                                                  e.stopPropagation();
+                                                                  e.preventDefault();
+                                                                  setDetailModal({ userId: user.userId, userName: user.userName, boxSize });
+                                                                }}
+                                                                className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium cursor-pointer hover:opacity-80 transition-opacity ${
+                                                                  isMeetingGoal 
+                                                                    ? 'bg-green-100 text-green-800' 
+                                                                    : 'bg-red-100 text-red-800'
+                                                                }`}
+                                                                title="Click to see calculation details"
+                                                              >
+                                                                {isMeetingGoal ? '✓ Meeting Goal' : '✗ Missing Goal'}
+                                                              </button>
+                                                            ) : (
+                                                              <span className="text-gray-400 text-xs">—</span>
+                                                            )}
+                                                          </td>
+                                                        </tr>
+                                                      );
+                                                    })}
+                                                  </tbody>
+                                                </table>
+                                              </div>
+                                            </td>
+                                          </tr>
+                                        )}
+                                      </>
                                     );
                                   })}
                               </tbody>
@@ -556,6 +694,117 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
+      {/* Detail Modal */}
+      {detailModal && data && (() => {
+        const user = data.users.find(u => u.userId === detailModal.userId);
+        const boxStats = user?.boxSizeStats?.[detailModal.boxSize];
+        const details = boxStats?.packingTimeDetails || [];
+        
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+              {/* Header */}
+              <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                <div>
+                  <h2 className="text-xl font-semibold text-gray-900">
+                    Packing Time Details
+                  </h2>
+                  <p className="text-sm text-gray-600 mt-1">
+                    {detailModal.userName} - {detailModal.boxSize}
+                  </p>
+                  {boxStats && (
+                    <p className="text-sm text-gray-500 mt-1">
+                      Average: {boxStats.averageTimeMinutes?.toFixed(1)} min | Goal: {boxStats.goalMinutes} min
+                    </p>
+                  )}
+                </div>
+                <button
+                  onClick={() => setDetailModal(null)}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="flex-1 overflow-y-auto p-6">
+                {details.length > 0 ? (
+                  <div className="space-y-4">
+                    <div className="text-sm text-gray-600 mb-4">
+                      Showing time differences between consecutive shipments. Times marked in <span className="text-green-600 font-medium">green</span> were included in the average calculation, times marked in <span className="text-red-600 font-medium">red</span> were excluded (likely breaks).
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Previous Shipment
+                            </th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Previous Time
+                            </th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Current Shipment
+                            </th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Current Time
+                            </th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Time Difference
+                            </th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Status
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {details.map((detail, index) => (
+                            <tr key={index} className="hover:bg-gray-50">
+                              <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                                {detail.previousBoxSize}
+                              </td>
+                              <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                                {format(new Date(detail.previousTime), 'MMM dd, yyyy HH:mm:ss')}
+                              </td>
+                              <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                                {detail.currentBoxSize}
+                              </td>
+                              <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                                {format(new Date(detail.currentTime), 'MMM dd, yyyy HH:mm:ss')}
+                              </td>
+                              <td className={`px-4 py-3 whitespace-nowrap text-sm font-medium ${
+                                detail.included ? 'text-gray-900' : 'text-gray-400'
+                              }`}>
+                                {detail.timeDifferenceMinutes.toFixed(2)} min
+                              </td>
+                              <td className="px-4 py-3 whitespace-nowrap">
+                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                  detail.included 
+                                    ? 'bg-green-100 text-green-800' 
+                                    : 'bg-red-100 text-red-800'
+                                }`}>
+                                  {detail.included ? 'Included' : 'Excluded'}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-gray-500">
+                    No packing time data available for this box size.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

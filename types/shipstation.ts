@@ -34,6 +34,23 @@ export interface HourlySeriesPoint {
   [userId: string]: string | number; // dynamic keys for each user's shipment count
 }
 
+export interface PackingTimeDetail {
+  currentBoxSize: string;
+  currentTime: string; // ISO timestamp
+  previousBoxSize: string;
+  previousTime: string; // ISO timestamp
+  timeDifferenceMinutes: number;
+  included: boolean; // Whether this was included in the average calculation
+}
+
+export interface BoxSizeStats {
+  count: number;
+  averageTimeMinutes?: number; // Average time to pack this box size
+  goalMinutes?: number; // Target time for this box size
+  isMeetingGoal?: boolean; // Whether average time meets the goal
+  packingTimeDetails?: PackingTimeDetail[]; // Detailed breakdown of calculations
+}
+
 export interface UserSummary {
   userId: string;
   userName: string;
@@ -43,6 +60,8 @@ export interface UserSummary {
   shipmentsPerHour?: number; // Calculated rate per hour
   shipmentsPerDay?: number; // Calculated rate per day
   minutesPerShipment?: number; // Calculated minutes per shipment (60 / shipmentsPerHour)
+  boxSizeBreakdown?: Record<string, number>; // Map of box size name -> count
+  boxSizeStats?: Record<string, BoxSizeStats>; // Map of box size name -> stats with goals
 }
 
 export interface ShipmentsHourlyResponse {

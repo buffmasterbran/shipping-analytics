@@ -7,6 +7,126 @@ const TIMEZONE = 'America/New_York';
 const SHIPSTATION_TIMEZONE = 'America/Los_Angeles'; // ShipStation returns times in Pacific Time
 
 /**
+ * Packing time goals in minutes per box size
+ */
+const PACKING_TIME_GOALS: Record<string, number> = {
+  '2/4': 1.5,
+  '4/6': 1.5,
+  '6/10': 3,
+  '9/12': 4,
+  '12/18': 5,
+  '22/30': 7,
+  '12/24 (Factory 24x 16oz)': 7,
+};
+
+/**
+ * Map dimensions to box size name
+ * Maps standard box dimensions to their names
+ */
+function getBoxSizeName(dimensions: { length: number; width: number; height: number; units: string } | null | undefined): string {
+  if (!dimensions) {
+    return 'Unknown';
+  }
+  
+  const { length, width, height, units } = dimensions;
+  
+  // Normalize dimensions (sort to handle different orientations)
+  // Sort descending to match largest to smallest
+  const dims = [length, width, height].sort((a, b) => b - a);
+  
+  // Box size mappings (sorted by largest dimension first)
+  // Format: [largest, middle, smallest] => "Box Name"
+  
+  // a. 2/4 - 8x8x6
+  if (dims[0] === 8 && dims[1] === 8 && dims[2] === 6) {
+    return '2/4';
+  }
+  
+  // b. 4/6 - 16x8x4
+  if (dims[0] === 16 && dims[1] === 8 && dims[2] === 4) {
+    return '4/6';
+  }
+  
+  // c. 6/10 - 12x10x8
+  if (dims[0] === 12 && dims[1] === 10 && dims[2] === 8) {
+    return '6/10';
+  }
+  
+  // d. 9/12 - 12x12x8
+  if (dims[0] === 12 && dims[1] === 12 && dims[2] === 8) {
+    return '9/12';
+  }
+  
+  // e. 12/18 - 16x12x8
+  if (dims[0] === 16 && dims[1] === 12 && dims[2] === 8) {
+    return '12/18';
+  }
+  
+  // f. 12/24 (Factory 24x 16oz) - 16x12x12
+  if (dims[0] === 16 && dims[1] === 12 && dims[2] === 12) {
+    return '12/24 (Factory 24x 16oz)';
+  }
+  
+  // g. 22/30 - 20x12x12
+  if (dims[0] === 20 && dims[1] === 12 && dims[2] === 12) {
+    return '22/30';
+  }
+  
+  // h. 24/32 (Factory 24x 26oz) - 16x16x12
+  if (dims[0] === 16 && dims[1] === 16 && dims[2] === 12) {
+    return '24/32 (Factory 24x 26oz)';
+  }
+  
+  // i. 30/40 - 20x16x12
+  if (dims[0] === 20 && dims[1] === 16 && dims[2] === 12) {
+    return '30/40';
+  }
+  
+  // j. 36/48 - 24x16x12
+  if (dims[0] === 24 && dims[1] === 16 && dims[2] === 12) {
+    return '36/48';
+  }
+  
+  // k. 48/64 - 24x16x16
+  if (dims[0] === 24 && dims[1] === 16 && dims[2] === 16) {
+    return '48/64';
+  }
+  
+  // l. CUSTOM PACKAGING - 1x1x1
+  if (dims[0] === 1 && dims[1] === 1 && dims[2] === 1) {
+    return 'CUSTOM PACKAGING';
+  }
+  
+  // m. Desktop Display - 20x17x5
+  if (dims[0] === 20 && dims[1] === 17 && dims[2] === 5) {
+    return 'Desktop Display';
+  }
+  
+  // n. Freestanding POP-FRS-72 - 54x24x5
+  if (dims[0] === 54 && dims[1] === 24 && dims[2] === 5) {
+    return 'Freestanding POP-FRS-72';
+  }
+  
+  // o. FRS POP 2 of 2 (freestanding) - 32x25x6
+  if (dims[0] === 32 && dims[1] === 25 && dims[2] === 6) {
+    return 'FRS POP 2 of 2 (freestanding)';
+  }
+  
+  // p. Freestanding Rear Kit (POP-FRS-Rear) - 15x24x11
+  if (dims[0] === 24 && dims[1] === 15 && dims[2] === 11) {
+    return 'Freestanding Rear Kit (POP-FRS-Rear)';
+  }
+  
+  // q. (Factory 24x 10oz) - 24x17x6
+  if (dims[0] === 24 && dims[1] === 17 && dims[2] === 6) {
+    return '(Factory 24x 10oz)';
+  }
+  
+  // Return formatted dimensions for unmapped sizes
+  return `${length}x${width}x${height} ${units}`;
+}
+
+/**
  * Aggregate shipments by hour and userId
  */
 export function aggregateShipmentsByHour(
@@ -28,6 +148,13 @@ export function aggregateShipmentsByHour(
   
   // Map to store first and last shipment dates per user: userName -> { first: Date, last: Date }
   const userDateRanges = new Map<string, { first: Date; last: Date }>();
+  
+  // Map to store box size breakdown per user: userName -> boxSizeName -> count
+  const userBoxSizes = new Map<string, Map<string, number>>();
+  
+  // Map to store box size shipments with timestamps: userName -> boxSizeName -> Date[]
+  // Used to calculate average packing time per box size
+  const userBoxSizeTimestamps = new Map<string, Map<string, Date[]>>();
 
   for (const shipment of shipments) {
     // Use createDate, fallback to shipDate
@@ -170,6 +297,25 @@ export function aggregateShipmentsByHour(
         range.last = nyDate;
       }
     }
+    
+    // Track box sizes for this user
+    const dimensions = (shipment as any).dimensions;
+    const boxSizeName = getBoxSizeName(dimensions);
+    if (!userBoxSizes.has(userKey)) {
+      userBoxSizes.set(userKey, new Map());
+    }
+    const boxSizeMap = userBoxSizes.get(userKey)!;
+    boxSizeMap.set(boxSizeName, (boxSizeMap.get(boxSizeName) || 0) + 1);
+    
+    // Track timestamps for box sizes to calculate average packing time
+    if (!userBoxSizeTimestamps.has(userKey)) {
+      userBoxSizeTimestamps.set(userKey, new Map());
+    }
+    const boxSizeTimestampsMap = userBoxSizeTimestamps.get(userKey)!;
+    if (!boxSizeTimestampsMap.has(boxSizeName)) {
+      boxSizeTimestampsMap.set(boxSizeName, []);
+    }
+    boxSizeTimestampsMap.get(boxSizeName)!.push(nyDate);
   }
 
   // Convert to series array
@@ -223,6 +369,106 @@ export function aggregateShipmentsByHour(
         }
       }
       
+      // Convert box size map to object and calculate stats
+      const boxSizeBreakdown: Record<string, number> = {};
+      const boxSizeStats: Record<string, { count: number; averageTimeMinutes?: number; goalMinutes?: number; isMeetingGoal?: boolean }> = {};
+      const boxSizeMap = userBoxSizes.get(userKey);
+      const timestampsMap = userBoxSizeTimestamps.get(userKey);
+      
+      if (boxSizeMap && timestampsMap) {
+        // Collect all shipments with their box sizes and timestamps
+        const allShipments: Array<{ boxSize: string; timestamp: Date }> = [];
+        timestampsMap.forEach((timestamps, boxSizeName) => {
+          timestamps.forEach(timestamp => {
+            allShipments.push({ boxSize: boxSizeName, timestamp });
+          });
+        });
+        
+        // Sort all shipments chronologically
+        allShipments.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+        
+        // Calculate packing times: time difference from previous shipment to current shipment
+        // The time difference is attributed to the current shipment's box size
+        const packingTimesByBoxSize = new Map<string, number[]>();
+        const packingDetailsByBoxSize = new Map<string, Array<{ currentBoxSize: string; currentTime: string; previousBoxSize: string; previousTime: string; timeDifferenceMinutes: number; included: boolean }>>();
+        
+        for (let i = 1; i < allShipments.length; i++) {
+          const current = allShipments[i];
+          const previous = allShipments[i - 1];
+          
+          const diffMs = current.timestamp.getTime() - previous.timestamp.getTime();
+          const diffMinutes = diffMs / (1000 * 60);
+          
+          // Track details for this box size
+          if (!packingDetailsByBoxSize.has(current.boxSize)) {
+            packingDetailsByBoxSize.set(current.boxSize, []);
+          }
+          
+          const included = diffMinutes >= 0.5 && diffMinutes <= 60;
+          packingDetailsByBoxSize.get(current.boxSize)!.push({
+            currentBoxSize: current.boxSize,
+            currentTime: current.timestamp.toISOString(),
+            previousBoxSize: previous.boxSize,
+            previousTime: previous.timestamp.toISOString(),
+            timeDifferenceMinutes: parseFloat(diffMinutes.toFixed(2)),
+            included,
+          });
+          
+          // Only include reasonable time differences (between 0.5 and 60 minutes)
+          // This filters out breaks, lunch, etc.
+          if (included) {
+            if (!packingTimesByBoxSize.has(current.boxSize)) {
+              packingTimesByBoxSize.set(current.boxSize, []);
+            }
+            packingTimesByBoxSize.get(current.boxSize)!.push(diffMinutes);
+          }
+        }
+        
+        // Calculate averages per box size
+        boxSizeMap.forEach((count, boxSizeName) => {
+          boxSizeBreakdown[boxSizeName] = count;
+          
+          const packingTimes = packingTimesByBoxSize.get(boxSizeName) || [];
+          let averageTimeMinutes: number | undefined;
+          
+          if (packingTimes.length > 0) {
+            // Calculate average from actual packing times
+            averageTimeMinutes = packingTimes.reduce((sum, time) => sum + time, 0) / packingTimes.length;
+          } else if (count > 0) {
+            // If this is the first shipment(s) of the day and we have other box sizes with averages,
+            // use the average of all other box sizes as an estimate
+            const allAverages: number[] = [];
+            packingTimesByBoxSize.forEach((times, boxSize) => {
+              if (times.length > 0) {
+                const avg = times.reduce((sum, time) => sum + time, 0) / times.length;
+                allAverages.push(avg);
+              }
+            });
+            
+            if (allAverages.length > 0) {
+              averageTimeMinutes = allAverages.reduce((sum, avg) => sum + avg, 0) / allAverages.length;
+            }
+          }
+          
+          // Get goal for this box size
+          const goalMinutes = PACKING_TIME_GOALS[boxSizeName];
+          const isMeetingGoal = averageTimeMinutes !== undefined && goalMinutes !== undefined
+            ? averageTimeMinutes <= goalMinutes
+            : undefined;
+          
+          // Get detailed breakdown for this box size
+          const packingDetails = packingDetailsByBoxSize.get(boxSizeName) || [];
+          
+          boxSizeStats[boxSizeName] = {
+            count,
+            averageTimeMinutes: averageTimeMinutes ? parseFloat(averageTimeMinutes.toFixed(1)) : undefined,
+            goalMinutes,
+            isMeetingGoal,
+            packingTimeDetails: packingDetails.length > 0 ? packingDetails : undefined,
+          };
+        });
+      }
+      
       return {
         userId,
         userName: userKey,
@@ -232,6 +478,8 @@ export function aggregateShipmentsByHour(
         shipmentsPerHour,
         shipmentsPerDay,
         minutesPerShipment,
+        boxSizeBreakdown: Object.keys(boxSizeBreakdown).length > 0 ? boxSizeBreakdown : undefined,
+        boxSizeStats: Object.keys(boxSizeStats).length > 0 ? boxSizeStats : undefined,
       };
     })
     .sort((a, b) => b.totalShipments - a.totalShipments);
@@ -265,6 +513,13 @@ export function aggregateShipmentsByDay(
   
   // Map to store first and last shipment dates per user: userName -> { first: Date, last: Date }
   const userDateRanges = new Map<string, { first: Date; last: Date }>();
+  
+  // Map to store box size breakdown per user: userName -> boxSizeName -> count
+  const userBoxSizes = new Map<string, Map<string, number>>();
+  
+  // Map to store box size shipments with timestamps: userName -> boxSizeName -> Date[]
+  // Used to calculate average packing time per box size
+  const userBoxSizeTimestamps = new Map<string, Map<string, Date[]>>();
 
   for (const shipment of shipments) {
     // Use createDate, fallback to shipDate
@@ -381,6 +636,25 @@ export function aggregateShipmentsByDay(
         range.last = nyDate;
       }
     }
+    
+    // Track box sizes for this user
+    const dimensions = (shipment as any).dimensions;
+    const boxSizeName = getBoxSizeName(dimensions);
+    if (!userBoxSizes.has(userKey)) {
+      userBoxSizes.set(userKey, new Map());
+    }
+    const boxSizeMap = userBoxSizes.get(userKey)!;
+    boxSizeMap.set(boxSizeName, (boxSizeMap.get(boxSizeName) || 0) + 1);
+    
+    // Track timestamps for box sizes to calculate average packing time
+    if (!userBoxSizeTimestamps.has(userKey)) {
+      userBoxSizeTimestamps.set(userKey, new Map());
+    }
+    const boxSizeTimestampsMap = userBoxSizeTimestamps.get(userKey)!;
+    if (!boxSizeTimestampsMap.has(boxSizeName)) {
+      boxSizeTimestampsMap.set(boxSizeName, []);
+    }
+    boxSizeTimestampsMap.get(boxSizeName)!.push(nyDate);
   }
 
   // Convert to series array
@@ -434,6 +708,106 @@ export function aggregateShipmentsByDay(
         }
       }
       
+      // Convert box size map to object and calculate stats
+      const boxSizeBreakdown: Record<string, number> = {};
+      const boxSizeStats: Record<string, { count: number; averageTimeMinutes?: number; goalMinutes?: number; isMeetingGoal?: boolean }> = {};
+      const boxSizeMap = userBoxSizes.get(userKey);
+      const timestampsMap = userBoxSizeTimestamps.get(userKey);
+      
+      if (boxSizeMap && timestampsMap) {
+        // Collect all shipments with their box sizes and timestamps
+        const allShipments: Array<{ boxSize: string; timestamp: Date }> = [];
+        timestampsMap.forEach((timestamps, boxSizeName) => {
+          timestamps.forEach(timestamp => {
+            allShipments.push({ boxSize: boxSizeName, timestamp });
+          });
+        });
+        
+        // Sort all shipments chronologically
+        allShipments.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+        
+        // Calculate packing times: time difference from previous shipment to current shipment
+        // The time difference is attributed to the current shipment's box size
+        const packingTimesByBoxSize = new Map<string, number[]>();
+        const packingDetailsByBoxSize = new Map<string, Array<{ currentBoxSize: string; currentTime: string; previousBoxSize: string; previousTime: string; timeDifferenceMinutes: number; included: boolean }>>();
+        
+        for (let i = 1; i < allShipments.length; i++) {
+          const current = allShipments[i];
+          const previous = allShipments[i - 1];
+          
+          const diffMs = current.timestamp.getTime() - previous.timestamp.getTime();
+          const diffMinutes = diffMs / (1000 * 60);
+          
+          // Track details for this box size
+          if (!packingDetailsByBoxSize.has(current.boxSize)) {
+            packingDetailsByBoxSize.set(current.boxSize, []);
+          }
+          
+          const included = diffMinutes >= 0.5 && diffMinutes <= 60;
+          packingDetailsByBoxSize.get(current.boxSize)!.push({
+            currentBoxSize: current.boxSize,
+            currentTime: current.timestamp.toISOString(),
+            previousBoxSize: previous.boxSize,
+            previousTime: previous.timestamp.toISOString(),
+            timeDifferenceMinutes: parseFloat(diffMinutes.toFixed(2)),
+            included,
+          });
+          
+          // Only include reasonable time differences (between 0.5 and 60 minutes)
+          // This filters out breaks, lunch, etc.
+          if (included) {
+            if (!packingTimesByBoxSize.has(current.boxSize)) {
+              packingTimesByBoxSize.set(current.boxSize, []);
+            }
+            packingTimesByBoxSize.get(current.boxSize)!.push(diffMinutes);
+          }
+        }
+        
+        // Calculate averages per box size
+        boxSizeMap.forEach((count, boxSizeName) => {
+          boxSizeBreakdown[boxSizeName] = count;
+          
+          const packingTimes = packingTimesByBoxSize.get(boxSizeName) || [];
+          let averageTimeMinutes: number | undefined;
+          
+          if (packingTimes.length > 0) {
+            // Calculate average from actual packing times
+            averageTimeMinutes = packingTimes.reduce((sum, time) => sum + time, 0) / packingTimes.length;
+          } else if (count > 0) {
+            // If this is the first shipment(s) of the day and we have other box sizes with averages,
+            // use the average of all other box sizes as an estimate
+            const allAverages: number[] = [];
+            packingTimesByBoxSize.forEach((times, boxSize) => {
+              if (times.length > 0) {
+                const avg = times.reduce((sum, time) => sum + time, 0) / times.length;
+                allAverages.push(avg);
+              }
+            });
+            
+            if (allAverages.length > 0) {
+              averageTimeMinutes = allAverages.reduce((sum, avg) => sum + avg, 0) / allAverages.length;
+            }
+          }
+          
+          // Get goal for this box size
+          const goalMinutes = PACKING_TIME_GOALS[boxSizeName];
+          const isMeetingGoal = averageTimeMinutes !== undefined && goalMinutes !== undefined
+            ? averageTimeMinutes <= goalMinutes
+            : undefined;
+          
+          // Get detailed breakdown for this box size
+          const packingDetails = packingDetailsByBoxSize.get(boxSizeName) || [];
+          
+          boxSizeStats[boxSizeName] = {
+            count,
+            averageTimeMinutes: averageTimeMinutes ? parseFloat(averageTimeMinutes.toFixed(1)) : undefined,
+            goalMinutes,
+            isMeetingGoal,
+            packingTimeDetails: packingDetails.length > 0 ? packingDetails : undefined,
+          };
+        });
+      }
+      
       return {
         userId,
         userName: userKey,
@@ -443,6 +817,8 @@ export function aggregateShipmentsByDay(
         shipmentsPerHour,
         shipmentsPerDay,
         minutesPerShipment,
+        boxSizeBreakdown: Object.keys(boxSizeBreakdown).length > 0 ? boxSizeBreakdown : undefined,
+        boxSizeStats: Object.keys(boxSizeStats).length > 0 ? boxSizeStats : undefined,
       };
     })
     .sort((a, b) => b.totalShipments - a.totalShipments);
