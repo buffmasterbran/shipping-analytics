@@ -40,13 +40,17 @@ export async function GET(request: NextRequest) {
     // Convert to UTC for ShipStation API (they expect UTC dates)
     // IMPORTANT: Parse the date string as Eastern Time explicitly, then convert to UTC
     // This ensures consistent behavior on both localhost (Eastern) and Vercel (UTC)
-    // We need to treat the date string as Eastern time, so we parse it and then use zonedTimeToUtc
-    // The date string "2025-12-06T00:00:00" should be interpreted as Eastern time, not UTC
-    const startDateEastern = parseISO(`${startDateFormatted}T00:00:00-05:00`); // EST offset
-    const startUTC = zonedTimeToUtc(startDateEastern, TIMEZONE).toISOString();
+    // The issue: new Date() interprets date strings in the server's local timezone
+    // Solution: Use zonedTimeToUtc with a date constructed as Eastern time
+    // We parse as UTC first, then convert to Eastern timezone, then back to UTC
+    // This effectively treats the date string as Eastern time
+    const startDateParsed = parseISO(`${startDateFormatted}T00:00:00Z`); // Parse as UTC
+    const startDateEastern = utcToZonedTime(startDateParsed, TIMEZONE); // Convert to Eastern
+    const startUTC = zonedTimeToUtc(startDateEastern, TIMEZONE).toISOString(); // Back to UTC
     
-    const endDateEastern = parseISO(`${endDateFormatted}T23:59:59-05:00`); // EST offset
-    const endUTC = zonedTimeToUtc(endDateEastern, TIMEZONE).toISOString();
+    const endDateParsed = parseISO(`${endDateFormatted}T23:59:59Z`); // Parse as UTC
+    const endDateEastern = utcToZonedTime(endDateParsed, TIMEZONE); // Convert to Eastern
+    const endUTC = zonedTimeToUtc(endDateEastern, TIMEZONE).toISOString(); // Back to UTC
 
     // Step 1: Fetch active users first to get name mappings
     const activeUsers = await fetchAllUsers(false);
