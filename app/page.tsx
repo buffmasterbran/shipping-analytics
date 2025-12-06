@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { format, subDays, startOfDay, endOfDay } from 'date-fns';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import type { ShipmentsHourlyResponse, HourlySeriesPoint } from '@/types/shipstation';
+import DateRangePicker from '@/components/DateRangePicker';
 
 export default function Dashboard() {
   const [data, setData] = useState<ShipmentsHourlyResponse | null>(null);
@@ -90,16 +91,18 @@ export default function Dashboard() {
   const sortedUsers = data?.users ? [...data.users].sort((a, b) => a.userName.localeCompare(b.userName)) : [];
   const userNames = sortedUsers.map(u => u.userName);
   
-  // Initialize visible users when data loads (all users visible by default)
+  // Initialize visible users when data loads (all users visible by default, except Brandegee Pierce)
   useEffect(() => {
     if (data && data.users.length > 0) {
       const newUserNames = sortedUsers.map(u => u.userName);
+      // Filter out "Brandegee Pierce" from default selection (admin user for batching)
+      const defaultVisibleUsers = newUserNames.filter(name => name !== 'Brandegee Pierce');
       setVisibleUsers(prev => {
         // Only update if the user list has actually changed
         const prevSorted = Array.from(prev).sort().join(',');
-        const newSorted = newUserNames.join(',');
+        const newSorted = defaultVisibleUsers.join(',');
         if (prevSorted !== newSorted) {
-          return new Set(newUserNames);
+          return new Set(defaultVisibleUsers);
         }
         return prev;
       });
@@ -137,6 +140,14 @@ export default function Dashboard() {
         .filter(user => visibleUsers.has(user.userName))
         .reduce((sum, user) => sum + user.totalShipments, 0)
     : data?.totals.totalShipments || 0;
+
+  // Determine if this is daily aggregation (date range > 1 day)
+  const isDailyAggregation = data ? (() => {
+    const startDateObj = new Date(data.startDate);
+    const endDateObj = new Date(data.endDate);
+    const daysDiff = Math.abs((endDateObj.getTime() - startDateObj.getTime()) / (1000 * 60 * 60 * 24));
+    return daysDiff > 1;
+  })() : false;
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -183,35 +194,19 @@ export default function Dashboard() {
           {/* Date Range Selector */}
           <div>
             <div className="space-y-3">
-              <div className="space-y-2">
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
-                    Start Date
-                  </label>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
-                    End Date
-                  </label>
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <button
-                  onClick={handleCustomDateSubmit}
-                  className="w-full px-3 py-2 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
-                >
-                  Apply
-                </button>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Date Range
+                </label>
+                <DateRangePicker
+                  startDate={startDate}
+                  endDate={endDate}
+                  onDateRangeChange={(start, end) => {
+                    setStartDate(start);
+                    setEndDate(end);
+                    fetchData(start, end);
+                  }}
+                />
               </div>
             </div>
           </div>
@@ -390,7 +385,7 @@ export default function Dashboard() {
                                     Math.abs((endDateObj.getTime() - startDateObj.getTime()) / (1000 * 60 * 60 * 24)) > 1;
                                   
                                   if (isDaily) {
-                                    return format(date, 'MM/dd');
+                                    return format(date, 'MM/dd EEE');
                                   } else {
                                     return format(date, 'HH:mm');
                                   }
@@ -399,7 +394,23 @@ export default function Dashboard() {
                                 }
                               }}
                             />
-                            <YAxis stroke="#6b7280" tick={{ fill: '#6b7280', fontSize: 12 }} />
+                            <YAxis 
+                              stroke="#6b7280" 
+                              tick={{ fill: '#6b7280', fontSize: 12 }}
+                              label={{
+                                value: (() => {
+                                  // Check if this is daily data (date range > 1 day)
+                                  const startDateObj = data ? new Date(data.startDate) : null;
+                                  const endDateObj = data ? new Date(data.endDate) : null;
+                                  const isDaily = startDateObj && endDateObj && 
+                                    Math.abs((endDateObj.getTime() - startDateObj.getTime()) / (1000 * 60 * 60 * 24)) > 1;
+                                  return isDaily ? 'Shipments per day' : 'Shipments per hour';
+                                })(),
+                                angle: -90,
+                                position: 'insideLeft',
+                                style: { textAnchor: 'middle', fill: '#6b7280', fontSize: 12 }
+                              }}
+                            />
                             <Tooltip
                               contentStyle={{
                                 backgroundColor: '#fff',
@@ -415,7 +426,7 @@ export default function Dashboard() {
                                   return value;
                                 }
                               }}
-                              formatter={(value: number) => [value, 'Shipments']}
+                              formatter={(value: number, name: string) => [value, name]}
                             />
                             <Legend
                               wrapperStyle={{ display: 'none' }}
@@ -453,6 +464,12 @@ export default function Dashboard() {
                                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                     Percentage
                                   </th>
+                                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    {isDailyAggregation ? 'Shipments/Day' : 'Shipments/Hour'}
+                                  </th>
+                                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Mins/Shipment
+                                  </th>
                                 </tr>
                               </thead>
                               <tbody className="bg-white divide-y divide-gray-200">
@@ -463,6 +480,10 @@ export default function Dashboard() {
                                     const percentage = visibleUsersTotal > 0
                                       ? ((user.totalShipments / visibleUsersTotal) * 100).toFixed(1)
                                       : '0';
+                                    const rate = isDailyAggregation 
+                                      ? (user.shipmentsPerDay || 0)
+                                      : (user.shipmentsPerHour || 0);
+                                    const minsPerShipment = user.minutesPerShipment || 0;
                                     return (
                                       <tr key={user.userId}>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
@@ -473,6 +494,12 @@ export default function Dashboard() {
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                           {percentage}%
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                          {rate.toFixed(1)}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                          {minsPerShipment.toFixed(1)}
                                         </td>
                                       </tr>
                                     );

@@ -60,8 +60,43 @@ export async function GET(request: NextRequest) {
       const userId = typeof user.userId === 'string' ? user.userId : user.userId.toString();
       // Prefer 'name' field over 'userName' for display (name is the display name)
       const displayName = user.name || user.userName || `User ${userId}`;
+      
+      // Store with multiple key formats for reliable lookup
+      // Store original userId (preserves type: string or number)
       userMap.set(user.userId, displayName);
+      
+      // Always store string version
+      userMap.set(userId, displayName);
+      
+      // If it's a UUID (contains hyphens), store lowercase version
+      if (typeof user.userId === 'string' && user.userId.includes('-')) {
+        userMap.set(user.userId.toLowerCase(), displayName);
+        // Also store without hyphens for matching
+        userMap.set(user.userId.replace(/-/g, ''), displayName);
+        userMap.set(user.userId.replace(/-/g, '').toLowerCase(), displayName);
+      }
+      
+      // If it's a numeric string, also store as number
+      if (typeof user.userId === 'string' && !isNaN(Number(user.userId)) && !user.userId.includes('-')) {
+        userMap.set(Number(user.userId), displayName);
+      }
+      
+      // If it's a number, also store as string
+      if (typeof user.userId === 'number') {
+        userMap.set(userId, displayName);
+      }
     });
+    
+    // Debug: Log userMap contents
+    console.log(`UserMap populated with ${userMap.size} entries`);
+    if (users.length > 0) {
+      console.log('Sample user from API:', {
+        userId: users[0].userId,
+        userIdType: typeof users[0].userId,
+        name: users[0].name,
+        userName: users[0].userName
+      });
+    }
 
     // Fetch all shipments
     const shipments = await fetchAllShipments(startUTC, endUTC);

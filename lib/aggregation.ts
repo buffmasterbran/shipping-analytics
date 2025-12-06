@@ -1,4 +1,4 @@
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, differenceInHours, differenceInDays } from 'date-fns';
 import { utcToZonedTime, zonedTimeToUtc } from 'date-fns-tz';
 import type { ShipStationShipment } from '@/types/shipstation';
 import type { HourlySeriesPoint, UserSummary } from '@/types/shipstation';
@@ -25,6 +25,9 @@ export function aggregateShipmentsByHour(
   
   // Map to store userName -> userId mapping
   const userNameToUserId = new Map<string, string>();
+  
+  // Map to store first and last shipment dates per user: userName -> { first: Date, last: Date }
+  const userDateRanges = new Map<string, { first: Date; last: Date }>();
 
   for (const shipment of shipments) {
     // Use createDate, fallback to shipDate
@@ -76,13 +79,41 @@ export function aggregateShipmentsByHour(
     const userId = typeof shipment.userId === 'string' ? shipment.userId : shipment.userId.toString();
     
     // Try multiple lookup strategies for UUID matching
+    // First try exact match with original type
     let userName = userMap.get(shipment.userId);
+    
+    // If not found, try with string conversion
+    if (!userName) {
+      const userIdStr = typeof shipment.userId === 'string' ? shipment.userId : shipment.userId.toString();
+      userName = userMap.get(userIdStr);
+    }
+    
+    // If still not found, try with number conversion (if it's a numeric string)
+    if (!userName && typeof shipment.userId === 'string' && !isNaN(Number(shipment.userId))) {
+      userName = userMap.get(Number(shipment.userId));
+    }
+    
+    // Try case-insensitive match for string IDs
     if (!userName && typeof shipment.userId === 'string') {
-      // Try case-insensitive match
+      const shipmentUserIdLower = shipment.userId.toLowerCase();
       for (const [key, value] of userMap.entries()) {
-        if (typeof key === 'string' && key.toLowerCase() === shipment.userId.toLowerCase()) {
+        const keyStr = typeof key === 'string' ? key : key.toString();
+        const keyStrLower = keyStr.toLowerCase();
+        
+        // Exact case-insensitive match
+        if (keyStrLower === shipmentUserIdLower) {
           userName = value;
           break;
+        }
+        
+        // For UUIDs, try matching without hyphens
+        if (shipment.userId.includes('-') && keyStr.includes('-')) {
+          const shipmentNoHyphens = shipmentUserIdLower.replace(/-/g, '');
+          const keyNoHyphens = keyStrLower.replace(/-/g, '');
+          if (shipmentNoHyphens === keyNoHyphens) {
+            userName = value;
+            break;
+          }
         }
       }
     }
@@ -90,10 +121,22 @@ export function aggregateShipmentsByHour(
     // Fallback to User ID if no match found
     if (!userName) {
       userName = `User ${userId}`;
-      // Debug: Log when we can't find a user name
-      if (shipments.indexOf(shipment) < 5) { // Only log first 5
-        console.log(`Could not find user name for userId: ${shipment.userId} (type: ${typeof shipment.userId})`);
-        console.log(`Available userMap keys:`, Array.from(userMap.keys()).slice(0, 5));
+      // Debug: Log when we can't find a user name - log all instances for UUIDs
+      if (typeof shipment.userId === 'string' && shipment.userId.includes('-')) {
+        // This is a UUID, log it
+        console.log(`[Hourly Aggregation] Could not find user name for UUID userId: ${shipment.userId}`);
+        console.log(`UserMap has this exact key?`, userMap.has(shipment.userId));
+        console.log(`UserMap has lowercase?`, userMap.has(shipment.userId.toLowerCase()));
+        console.log(`UserMap has no hyphens?`, userMap.has(shipment.userId.replace(/-/g, '')));
+        console.log(`Sample userMap keys (first 10):`, Array.from(userMap.keys()).slice(0, 10));
+        console.log(`UserMap size:`, userMap.size);
+        // Try to find a partial match
+        for (const [key, value] of userMap.entries()) {
+          const keyStr = typeof key === 'string' ? key : key.toString();
+          if (keyStr.toLowerCase().includes(shipment.userId.toLowerCase().substring(0, 8))) {
+            console.log(`Found partial match: ${keyStr} -> ${value}`);
+          }
+        }
       }
     }
     
@@ -114,6 +157,19 @@ export function aggregateShipmentsByHour(
 
     // Update user totals
     userTotals.set(userKey, (userTotals.get(userKey) || 0) + 1);
+    
+    // Track first and last shipment dates for this user
+    if (!userDateRanges.has(userKey)) {
+      userDateRanges.set(userKey, { first: nyDate, last: nyDate });
+    } else {
+      const range = userDateRanges.get(userKey)!;
+      if (nyDate < range.first) {
+        range.first = nyDate;
+      }
+      if (nyDate > range.last) {
+        range.last = nyDate;
+      }
+    }
   }
 
   // Convert to series array
@@ -131,11 +187,51 @@ export function aggregateShipmentsByHour(
   const userSummaries: UserSummary[] = Array.from(userTotals.entries())
     .map(([userKey, totalShipments]) => {
       const userId = userNameToUserId.get(userKey) || userKey;
+      const dateRange = userDateRanges.get(userKey);
+      
+      let shipmentsPerHour: number | undefined;
+      let shipmentsPerDay: number | undefined;
+      let minutesPerShipment: number | undefined;
+      
+      if (dateRange) {
+        // Calculate time difference in milliseconds, then convert to hours
+        const timeDiffMs = dateRange.last.getTime() - dateRange.first.getTime();
+        const hoursDiff = timeDiffMs / (1000 * 60 * 60); // Convert to hours (can be fractional)
+        const daysDiff = differenceInDays(dateRange.last, dateRange.first);
+        
+        // Calculate shipments per hour
+        // If time difference is less than 1 hour, treat as 1 hour (minimum)
+        if (hoursDiff > 0) {
+          shipmentsPerHour = totalShipments / hoursDiff;
+        } else {
+          // If all shipments are at the same time or within same hour, rate is just the count
+          shipmentsPerHour = totalShipments;
+        }
+        
+        // Calculate minutes per shipment (60 minutes / shipments per hour)
+        if (shipmentsPerHour > 0) {
+          minutesPerShipment = 60 / shipmentsPerHour;
+        }
+        
+        // Calculate shipments per day
+        // If days difference is 0, treat as 1 day (minimum)
+        if (daysDiff > 0) {
+          shipmentsPerDay = totalShipments / (daysDiff + 1); // +1 to include both start and end days
+        } else {
+          // If all shipments are on the same day, rate is just the count
+          shipmentsPerDay = totalShipments;
+        }
+      }
       
       return {
         userId,
         userName: userKey,
         totalShipments,
+        firstShipmentDate: dateRange?.first.toISOString(),
+        lastShipmentDate: dateRange?.last.toISOString(),
+        shipmentsPerHour,
+        shipmentsPerDay,
+        minutesPerShipment,
       };
     })
     .sort((a, b) => b.totalShipments - a.totalShipments);
@@ -166,6 +262,9 @@ export function aggregateShipmentsByDay(
   
   // Map to store userName -> userId mapping
   const userNameToUserId = new Map<string, string>();
+  
+  // Map to store first and last shipment dates per user: userName -> { first: Date, last: Date }
+  const userDateRanges = new Map<string, { first: Date; last: Date }>();
 
   for (const shipment of shipments) {
     // Use createDate, fallback to shipDate
@@ -204,13 +303,41 @@ export function aggregateShipmentsByDay(
     const userId = typeof shipment.userId === 'string' ? shipment.userId : shipment.userId.toString();
     
     // Try multiple lookup strategies for UUID matching
+    // First try exact match with original type
     let userName = userMap.get(shipment.userId);
+    
+    // If not found, try with string conversion
+    if (!userName) {
+      const userIdStr = typeof shipment.userId === 'string' ? shipment.userId : shipment.userId.toString();
+      userName = userMap.get(userIdStr);
+    }
+    
+    // If still not found, try with number conversion (if it's a numeric string)
+    if (!userName && typeof shipment.userId === 'string' && !isNaN(Number(shipment.userId))) {
+      userName = userMap.get(Number(shipment.userId));
+    }
+    
+    // Try case-insensitive match for string IDs
     if (!userName && typeof shipment.userId === 'string') {
-      // Try case-insensitive match
+      const shipmentUserIdLower = shipment.userId.toLowerCase();
       for (const [key, value] of userMap.entries()) {
-        if (typeof key === 'string' && key.toLowerCase() === shipment.userId.toLowerCase()) {
+        const keyStr = typeof key === 'string' ? key : key.toString();
+        const keyStrLower = keyStr.toLowerCase();
+        
+        // Exact case-insensitive match
+        if (keyStrLower === shipmentUserIdLower) {
           userName = value;
           break;
+        }
+        
+        // For UUIDs, try matching without hyphens
+        if (shipment.userId.includes('-') && keyStr.includes('-')) {
+          const shipmentNoHyphens = shipmentUserIdLower.replace(/-/g, '');
+          const keyNoHyphens = keyStrLower.replace(/-/g, '');
+          if (shipmentNoHyphens === keyNoHyphens) {
+            userName = value;
+            break;
+          }
         }
       }
     }
@@ -218,6 +345,10 @@ export function aggregateShipmentsByDay(
     // Fallback to User ID if no match found
     if (!userName) {
       userName = `User ${userId}`;
+      // Debug: Log UUIDs that can't be matched
+      if (typeof shipment.userId === 'string' && shipment.userId.includes('-')) {
+        console.log(`[Daily Aggregation] Could not find user name for UUID: ${shipment.userId}`);
+      }
     }
     
     const userKey = userName;
@@ -237,6 +368,19 @@ export function aggregateShipmentsByDay(
 
     // Update user totals
     userTotals.set(userKey, (userTotals.get(userKey) || 0) + 1);
+    
+    // Track first and last shipment dates for this user
+    if (!userDateRanges.has(userKey)) {
+      userDateRanges.set(userKey, { first: nyDate, last: nyDate });
+    } else {
+      const range = userDateRanges.get(userKey)!;
+      if (nyDate < range.first) {
+        range.first = nyDate;
+      }
+      if (nyDate > range.last) {
+        range.last = nyDate;
+      }
+    }
   }
 
   // Convert to series array
@@ -254,11 +398,51 @@ export function aggregateShipmentsByDay(
   const userSummaries: UserSummary[] = Array.from(userTotals.entries())
     .map(([userKey, totalShipments]) => {
       const userId = userNameToUserId.get(userKey) || userKey;
+      const dateRange = userDateRanges.get(userKey);
+      
+      let shipmentsPerHour: number | undefined;
+      let shipmentsPerDay: number | undefined;
+      let minutesPerShipment: number | undefined;
+      
+      if (dateRange) {
+        // Calculate time difference in milliseconds, then convert to hours
+        const timeDiffMs = dateRange.last.getTime() - dateRange.first.getTime();
+        const hoursDiff = timeDiffMs / (1000 * 60 * 60); // Convert to hours (can be fractional)
+        const daysDiff = differenceInDays(dateRange.last, dateRange.first);
+        
+        // Calculate shipments per hour
+        // If time difference is less than 1 hour, treat as 1 hour (minimum)
+        if (hoursDiff > 0) {
+          shipmentsPerHour = totalShipments / hoursDiff;
+        } else {
+          // If all shipments are at the same time or within same hour, rate is just the count
+          shipmentsPerHour = totalShipments;
+        }
+        
+        // Calculate minutes per shipment (60 minutes / shipments per hour)
+        if (shipmentsPerHour > 0) {
+          minutesPerShipment = 60 / shipmentsPerHour;
+        }
+        
+        // Calculate shipments per day
+        // If days difference is 0, treat as 1 day (minimum)
+        if (daysDiff > 0) {
+          shipmentsPerDay = totalShipments / (daysDiff + 1); // +1 to include both start and end days
+        } else {
+          // If all shipments are on the same day, rate is just the count
+          shipmentsPerDay = totalShipments;
+        }
+      }
       
       return {
         userId,
         userName: userKey,
         totalShipments,
+        firstShipmentDate: dateRange?.first.toISOString(),
+        lastShipmentDate: dateRange?.last.toISOString(),
+        shipmentsPerHour,
+        shipmentsPerDay,
+        minutesPerShipment,
       };
     })
     .sort((a, b) => b.totalShipments - a.totalShipments);

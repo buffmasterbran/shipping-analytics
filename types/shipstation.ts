@@ -38,6 +38,11 @@ export interface UserSummary {
   userId: string;
   userName: string;
   totalShipments: number;
+  firstShipmentDate?: string; // ISO string of first shipment
+  lastShipmentDate?: string; // ISO string of last shipment
+  shipmentsPerHour?: number; // Calculated rate per hour
+  shipmentsPerDay?: number; // Calculated rate per day
+  minutesPerShipment?: number; // Calculated minutes per shipment (60 / shipmentsPerHour)
 }
 
 export interface ShipmentsHourlyResponse {
