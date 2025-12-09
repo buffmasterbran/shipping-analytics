@@ -267,11 +267,11 @@ export default function Dashboard() {
   const visibleUserNames = userNames.filter(name => visibleUsers.has(name));
   
   // Calculate total shipments for visible users only
-  const visibleUsersTotal = data && visibleUserNames.length > 0
+  const visibleUsersTotal = data
     ? data.users
         .filter(user => visibleUsers.has(user.userName))
         .reduce((sum, user) => sum + user.totalShipments, 0)
-    : data?.totals.totalShipments || 0;
+    : 0;
 
   // Determine if this is daily aggregation (date range > 1 day)
   const isDailyAggregation = data ? (() => {
@@ -351,7 +351,7 @@ export default function Dashboard() {
                   Total Shipments
                 </div>
                 <div className="text-2xl font-bold text-gray-900">
-                  {data.totals.totalShipments.toLocaleString()}
+                  {visibleUsersTotal.toLocaleString()}
                 </div>
                 <div className="text-xs text-gray-600 mt-1">
                   {format(new Date(data.startDate), 'EEE MM/dd')} to {format(new Date(data.endDate), 'EEE MM/dd')}
